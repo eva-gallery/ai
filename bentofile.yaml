@@ -1,0 +1,13 @@
+service: "main:EmbeddingSearchService"
+include:
+  - "*.py"
+python:
+  lock_packages: true
+  packages:
+    - autodistill-metaclip
+    - psycopg2-binary
+    - alembic
+    - pgvector
+    - loguru
+    - sqlalchemy
+    - asyncpg
