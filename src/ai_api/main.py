@@ -37,14 +37,14 @@ class EmbeddingSearchService:
                     await conn.commit()
 
     @bentoml.api(batchable=True)
-    async def get_similar(self, queries: list[str]):
+    async def get_similar(self, queries: list[str], count: int = 50):
         embedded_texts = self.model_text.encode(queries)
 
         async with self.pg as conn:
-            stmt = text("SELECT id FROM image ORDER BY image_vector <=> :query LIMIT 3")
+            stmt = text("SELECT id FROM image ORDER BY image_vector <=> :query LIMIT :count")
             results = []
             for embedded_text in embedded_texts:
-                result = await conn.execute(stmt, {"query": embedded_text})
+                result = await conn.execute(stmt, {"query": embedded_text, "count": count})
                 results.append([x.id for x in result.fetchall()])
 
         return results

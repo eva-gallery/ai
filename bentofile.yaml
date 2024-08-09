@@ -4,7 +4,9 @@ include:
 python:
   lock_packages: true
   packages:
-    - autodistill-metaclip
+    - sentence-transformers
+    - transformers
+    - alembic
     - psycopg2-binary
     - alembic
     - pgvector
