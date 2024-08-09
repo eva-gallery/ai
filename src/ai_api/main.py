@@ -20,10 +20,11 @@ class EmbeddingSearchService:
         self.pg = AIOPostgres(url="postgresql+asyncpg://postgres:password@localhost:5432/ai_api")
 
     @bentoml.api(batchable=True)
-    async def embed(self, images: list[str]):
+    async def embed(self, images: list[str], captions: list[str]):
         # image_data = get_from_server()  # TODO
         image_embeds = [self.model_img.encode(image) for image in images]
-        image_captions = [self.model_caption(image)['generated_text'] for image in images]
+        image_captions = [self.model_caption(image)['generated_text'] if not caption else caption
+                          for caption, image in zip(captions, images)]
         # save to pg
         async with self.pg as conn_init:
             async with conn_init.begin() as conn:
