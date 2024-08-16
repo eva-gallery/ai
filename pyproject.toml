@@ -1,6 +1,7 @@
 [tool.poetry]
 name = "evagallery-ai-api"
 version = "0.0.1-pre"
+readme = "README.md"
 description = "The API endpoint for interacting with EVA Gallery's AI functionality"
 authors = ["slobodaapl <slobodaapl@gmail.com>"]
 packages = [{ include = "ai_api", from = "src" }]
@@ -11,6 +12,10 @@ bentoml = "^1.2.19,~1"
 transformers = "^4.41.2,~4"
 asyncpg = "~0"
 sqlalchemy = "~2"
+torch = { version = "~2", source = "pytorch-gpu" }
+torchvision = { version = "~0", source = "pytorch-gpu" }
+numpy = "1.25.2"
+aiosqlite = "~0"
 sentence-transformers = "^2.1.0,~2"
 pgvector = "~0"
 loguru = "~0"
@@ -18,6 +23,7 @@ alembic = "~1"
 psycopg2-binary = "~2"
 
 [tool.poetry.group.dev.dependencies]
+alembic = "~1"
 pre-commit = "~3.3"
 bandit = "~1.7"
 pytest = "~7.3"
@@ -28,9 +34,37 @@ pytest-timeout = "~2.1"
 pytest-cov = "~4.0"
 pytest-asyncio = "~0.21"
 
+[[tool.poetry.source]]
+name = "pytorch-gpu"
+url = "https://download.pytorch.org/whl/cu124"
+priority = "explicit"
+
 [build-system]
-requires = ["poetry-core"]
+requires = ["poetry-core>=1.5.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+addopts = ""
+timeout = 60
 
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["./tests/*", ".venv/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "def __str__",
+    "if self.debug",
+    "if settings.debug",
+    "if settings.testing",
+    "if __name__ == .__main__.:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+]

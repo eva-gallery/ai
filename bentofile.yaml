@@ -1,4 +1,4 @@
-service: "main:EmbeddingSearchService"
+service: "ai_api.main:EmbeddingSearchService"
 include:
   - "*.py"
 python:
