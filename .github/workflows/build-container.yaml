@@ -9,11 +9,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: bentoml/setup-bentoml-action@v1
-        with:
-          python-version: '3.12'
-          bentoml-version: 'main'
-          cache: 'pip'
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # - uses: bentoml/setup-bentoml-action@v1
+      #   with:
+      #     python-version: '3.12'
+      #     bentoml-version: 'main'
+      #     cache: 'pip'
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
