@@ -8,7 +8,6 @@ python:
     - transformers
     - alembic
     - psycopg2-binary
-    - alembic
     - pgvector
     - loguru
     - sqlalchemy

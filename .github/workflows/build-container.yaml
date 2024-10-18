@@ -27,12 +27,16 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build Bento
-        run: bentoml build
+      - uses: bentoml/build-bento-action@v1
+        with:
+          bentofile: 'bentofile.yaml'
 
       - name: Build and push
+        if: github.event_name != 'pull_request'
         uses: bentoml/containerize-push-action@v1
         with:
-          bento-tag: eva-gallery-ai:latest
+          context: ./
+          bentofile: ./bentofile.yaml
+          bento-tag: EmbeddingSearchService:latest
           push: true
           tags: evagalleryone/ai:latest
