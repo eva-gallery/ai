@@ -1,14 +1,28 @@
-service: "ai_api.main:EmbeddingSearchService"
+service: "ai_api.main:svc"
 include:
   - "*.py"
+  - "alembic/**/*"
+  - "settings.yaml"
+  - "config.yaml"
+  - alembic.ini
 python:
   lock_packages: true
   packages:
+    - bentoml[tracing_otlp]
+    - dynaconf
     - sentence-transformers
     - transformers
+    - torch
+    - torchvision
+    - numpy
     - alembic
     - psycopg2-binary
     - pgvector
     - loguru
     - sqlalchemy
     - asyncpg
+    - invisible-watermark
+    - diffusers
+    - httpx
+    - pillow
+    - aiosqlite

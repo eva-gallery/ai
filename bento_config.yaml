@@ -1,0 +1,10 @@
+tracing:
+  exporter_type: otlp
+  sample_rate: 1.0
+  otlp:
+    protocol: grpc
+    endpoint: http://localhost:4317
+    grpc:
+      insecure: true
+      headers:
+        - ["grpc-encoding", "gzip"]

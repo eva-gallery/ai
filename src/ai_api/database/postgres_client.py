@@ -3,7 +3,9 @@ from sqlalchemy.exc import InvalidRequestError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.ext.asyncio.session import AsyncSession as AsyncSessionType
-from sqlalchemy.orm.session import Session, sessionmaker
+from sqlalchemy.orm.session import Session, sessionmaker, SessionTransaction
+
+from ai_api.util.guard import is_async_session, is_sync_session, is_sync_session_transaction
 
 
 class DatabaseBase:
@@ -56,6 +58,9 @@ class AIOPostgres(DatabaseBase):
         return self._transaction
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if not is_async_session(self._transaction) or not is_async_session(self._async_context):
+            raise ValueError("Postgres client is not in a valid state")
+
         try:
             await self._transaction.commit()
         except InvalidRequestError | SQLAlchemyError as e:
@@ -81,7 +86,7 @@ class Postgres(DatabaseBase):
             self.init_diskann()
 
         self._context: Session | None = None
-        self._transaction: Session | None = None
+        self._transaction: SessionTransaction | None = None
 
     def __enter__(self) -> Session:
         self._context = self._session()
@@ -89,6 +94,9 @@ class Postgres(DatabaseBase):
         return self._context
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        if not is_sync_session_transaction(self._transaction) or not is_sync_session(self._context):
+            raise ValueError("Postgres client is not in a valid state")
+
         try:
             self._transaction.commit()
         except SQLAlchemyError as e:

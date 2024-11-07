@@ -1,0 +1,36 @@
+model:
+  embedding:
+    image:
+      name: "clip-ViT-B-32/clip-ViT-B-32"
+      vector_length: 1536
+    text:
+      name: "sentence-transformers/clip-ViT-B-32-multilingual-v1"
+      vector_length: 512
+    metadata:
+      name: "sentence-transformers/clip-ViT-B-32-multilingual-v1"
+      vector_length: 512
+  captioning:
+    name: "nlpconnect/vit-gpt2-image-captioning"
+  detection:
+    name: "jacoballessio/ai-image-detect-distilled"
+    threshold: 0.95
+  watermark:
+    encoder_name: "imatag/stable-signature-bzh-sdxl-vae-medium"
+    decoder_name: "imatag/stable-signature-bzh-detector-resnet18"
+    method: "rivaGan"
+
+eva_backend:
+  url: "http://localhost:8000"
+  patch_endpoint: "/ai/image/update"
+  
+bentoml:
+  workers: 1
+  gpus: 1
+
+postgres:
+  host: "localhost"
+  port: 5432
+  user: "postgres"
+  password: "postgres"
+  db: "postgres"
+  url: "@format postgresql+asyncpg://{this.postgres.user}:{this.postgres.password}@{this.postgres.host}:{this.postgres.port}/{this.postgres.db}"

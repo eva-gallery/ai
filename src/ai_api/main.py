@@ -1,69 +1,181 @@
 from __future__ import annotations
 
-import os
+import io
+import asyncio
+import uuid
 from typing import Optional
 
 import bentoml
-from sentence_transformers import SentenceTransformer
-from sqlalchemy import text
-from torch.cuda import is_available
-from transformers import pipeline
+import httpx
+from PIL import Image as PILImage
+from sqlalchemy import text, select
 
+from ai_api import settings
 from ai_api.database.postgres_client import AIOPostgres
-from ai_api.orm.image import Image
+from ai_api.model.api.status import ResponseStatus, ResponseType
+from ai_api.model.api.search import SearchRequest, SearchResponse
+from ai_api.model.api.process import BackendPatchRequest, ProcessImageRequest, AIGeneratedStatus
 from ai_api.util.logger import get_logger
+from ai_api.runners.embedding_runner import EmbeddingRunner
+from ai_api.orm import ImageData, GalleryEmbedding
+
+# Initialize shared resources
+runner = bentoml.Runner(EmbeddingRunner, name="embedding_runner")
+pg = AIOPostgres(url=settings.postgres.url)
+logger = get_logger()
+svc = bentoml.Service(
+    "embedding-search", 
+    runners=[runner], 
+    workers=settings.bentoml.workers,  # type: ignore
+    resources={"gpu": settings.bentoml.gpus}  # type: ignore
+)
 
 
-@bentoml.service(workers=os.environ.get("BENTOML_WORKERS", 1), resources={"gpu": os.environ.get("BENTOML_GPUS", 1)})
-class EmbeddingSearchService:
-    def __init__(self) -> None:
-        device = "cuda" if is_available() else "cpu"
-        self.model_img = SentenceTransformer(os.environ.get("IMAGE_EMBEDDING_MODEL", "clip-ViT-B-32"), device=device)
-        self.model_text = SentenceTransformer(os.environ.get("TEXT_EMBEDDING_MODEL", "sentence-transformers/clip-ViT-B-32-multilingual-v1"),
-                                              device=device)
-        self.model_caption = pipeline("image-to-text", model=os.environ.get("IMAGE_CAPTION_MODEL", "nlpconnect/vit-gpt2-image-captioning"),
-                                      device=device)
-        # self.model_tags = ???  # Add logit-based tag-model with mutlimodal capabilities to make use of caption
-        self.logger = get_logger()
-        pg_url = os.environ.get("POSTGRES_USER", "postgres") + ":" + os.environ.get("POSTGRES_PASSWORD", "password") + "@" + \
-                 os.environ.get("POSTGRES_HOST", "localhost") + ":" + os.environ.get("POSTGRES_PORT", "5432") + "/" + \
-                 os.environ.get("POSTGRES_DB", "ai_api")  # Will remake into a pydantic model incl all other configurables
-        # self.pg = AIOPostgres(url=pg_url)
-        self.pg = AIOPostgres()  # Uses sqlite for now
+@svc.on_startup
+async def startup(ctx):
+    # Run alembic migrations on startup
+    import os
+    from alembic import command
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    from pathlib import Path
 
-    @bentoml.api(batchable=True)
-    async def embed(self, images: list[str], captions: list[str]):  # TODO Remake to accept images as blobs with metadata
-        # image_data = get_from_server() ??? # TODO
-        image_embeds = [self.model_img.encode(image) for image in images]
-        image_captions = [self.model_caption(image)['generated_text'] if not caption else caption
-                          for caption, image in zip(captions, images)]
-        # save to pg
-        async with self.pg as conn_init:
-            async with conn_init.begin() as conn:
-                try:
-                    conn.session.add_all([Image(id=image, image_vector=vector, image_caption=caption)
-                                          for image, vector, caption in zip(images, image_embeds, image_captions)])
-                except Exception as e:  # TODO Add API custom exceptions and OTL tracing
-                    await conn.rollback()
-                    raise e
-                else:
-                    await conn.commit()
+    alembic_cfg = Config(Path(__file__).parent.parent.parent / "alembic.ini")
+    script = ScriptDirectory.from_config(alembic_cfg)
+    heads = script.get_revisions("head")
+    if heads:
+        command.upgrade(alembic_cfg, "head")
 
-    @bentoml.api(batchable=True, batch_dim=(0, 0), max_batch_size=32, max_latency_ms=1000)
-    async def get_similar(self, queries: list[str], count: Optional[int] = 50, page: Optional[int] = 0):
-        embedded_texts = self.model_text.encode(queries)
+@svc.api(
+    route="/search",
+    input=SearchRequest,  # type: ignore
+    output=SearchResponse,  # type: ignore
+)
+async def get_similar(queries: list[str], count: Optional[int] = 50, page: Optional[int] = 0):
+    embedded_texts = await runner.embed_text.async_run(queries)
+    
+    # embedded_texts is a list of lists of floats from the embedding model
+    if not isinstance(embedded_texts, list) or not all(isinstance(x, list) for x in embedded_texts):
+        logger.error("Failed to embed queries")
+        raise ValueError("Failed to embed queries")
 
-        async with self.pg as conn:
-            stmt = text("""
-                SELECT id
-                FROM image
-                ORDER BY image_vector <=> :query 
-                LIMIT :count OFFSET :offset
-            """)
-            results = []
+    async with pg as conn:
+        stmt = text("""
+            SELECT image_id
+            FROM gallery_embedding
+            ORDER BY text_embedding <=> :query 
+            LIMIT :count OFFSET :offset
+        """)
+        results = []
 
-            for embedded_text in embedded_texts:
-                result = await conn.execute(stmt, {"query": embedded_text, "count": count, "offset": page * count})
-                results.append([x.id for x in result.fetchall()])
+        for embedded_text in embedded_texts:
+            result = await conn.execute(
+                stmt,
+                {"query": embedded_text, "count": count, "offset": page * count}  # type: ignore
+            )  
+            results.append([x.image_id for x in result.fetchall()])
 
-        return results
+    return SearchResponse(id_list=results).model_dump()
+
+async def _process_image_data(
+    image_pil: PILImage.Image,
+    artwork_id: str,
+    ai_generated_status: AIGeneratedStatus,
+    metadata: dict
+) -> None:
+    # Get embeddings and caption
+    image_embed = await runner.embed_image.async_run([image_pil])
+    image_caption = metadata.get('caption', await runner.generate_caption.async_run(image_pil))
+    metadata_embedding = await runner.embed_text.async_run([str(metadata)])
+    caption_embedding = await runner.embed_text.async_run([image_caption])
+
+    # Generate watermark
+    new_uuid = str(uuid.uuid4())
+    watermarked_image_pil = await runner.add_watermark.async_run(image_pil, new_uuid)
+    
+    # Detect if AI generated
+    watermarked_image_embed = None
+    if ai_generated_status == AIGeneratedStatus.NOT_GENERATED:
+        ai_generated_status, score = await runner.detect_ai_generation.async_run(image_pil)
+        if ai_generated_status == AIGeneratedStatus.GENERATED:
+            watermarked_image_embed = await runner.embed_image.async_run([watermarked_image_pil])
+
+    # Save to database
+    async with pg as conn:
+        async with conn.begin():
+            try:
+                # Save image data and embeddings
+                image_data_record = ImageData(
+                    original_image_uuid=uuid.UUID(artwork_id),
+                    modified_image_uuid=new_uuid,
+                    image_metadata=metadata
+                )
+                conn.add(image_data_record)
+                
+                gallery_embedding_record = GalleryEmbedding(
+                    image_embedding_model_id=settings.model.embedding.image.name,
+                    text_embedding_model_id=settings.model.embedding.text.name,
+                    captioning_model_id=settings.model.captioning.name,
+                    image_embedding=image_embed[0],
+                    watermarked_image_embedding=watermarked_image_embed[0] if watermarked_image_embed else None,
+                    text_embedding=caption_embedding[0],
+                    metadata_embedding=metadata_embedding[0],
+                    image_id=image_data_record.id
+                )
+                conn.add(gallery_embedding_record)
+                
+            except Exception as e:
+                logger.error(f"Failed to save to database: {e}")
+                raise
+
+    # Send to eva backend endpoint
+    async with httpx.AsyncClient() as client:
+        img_byte_arr = io.BytesIO()
+        image_pil.save(img_byte_arr, format='PNG')
+        
+        await client.patch(
+            f"{settings.eva_backend.url}{settings.eva_backend.patch_endpoint}",
+            json=BackendPatchRequest(
+                image_uuid=artwork_id,
+                modified_image_uuid=new_uuid,
+                image=img_byte_arr.getvalue(),
+                ai_generated_status=ai_generated_status,
+                metadata=metadata
+            ).model_dump(by_alias=True)
+        )
+
+@svc.api(
+    route="/image/process",
+    input=ProcessImageRequest,  # type: ignore
+    output=ResponseStatus,  # type: ignore
+)
+async def process_image(
+    image: bytes,
+    artwork_id: str,
+    ai_generated_status: AIGeneratedStatus,
+    metadata: dict
+) -> dict:
+    image_pil = PILImage.open(io.BytesIO(image)).convert("RGB")
+    
+    # Check for duplicates
+    has_watermark, watermark = await runner.check_watermark.async_run(image_pil)
+    if has_watermark:
+        async with pg as conn:
+            result = await conn.execute(
+                select(ImageData).filter_by(modified_image_uuid=watermark)
+            )
+            if result.scalar():
+                return ResponseStatus(status=ResponseType.EXISTS).model_dump()
+    
+    if await runner.check_ai_watermark.async_run(image_pil):
+        return ResponseStatus(status=ResponseType.EXISTS).model_dump()
+    
+    # Start processing in background
+    asyncio.create_task(_process_image_data(
+        image_pil=image_pil,
+        artwork_id=artwork_id,
+        ai_generated_status=ai_generated_status,
+        metadata=metadata
+    ))
+    
+    return ResponseStatus(status=ResponseType.OK).model_dump(by_alias=True)

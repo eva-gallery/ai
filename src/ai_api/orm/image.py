@@ -1,15 +1,26 @@
-import uuid
+from __future__ import annotations
 
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import types
-from sqlalchemy.orm import mapped_column, Mapped
+from typing import TYPE_CHECKING
 
-from ai_api.orm import Base
+from sqlalchemy import ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .base import Base
+
+
+if TYPE_CHECKING:
+    from .image_data import ImageData
+    from .annotation import Annotation
+    from .gallery_embedding import GalleryEmbedding
 
 
 class Image(Base):
     __tablename__ = "image"
 
-    id: Mapped[uuid.UUID] = mapped_column(types.Uuid, primary_key=True, nullable=False, init=False)
-    image_vector: Mapped[list[float]] = mapped_column(Vector(1000), nullable=False)
-    image_caption: Mapped[str] = mapped_column(types.VARCHAR(1024), nullable=False)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    image_data_id: Mapped[int] = mapped_column(ForeignKey("image_data.id"))
+    annotation_id: Mapped[int] = mapped_column(ForeignKey("annotation.id"))
+
+    image_data: Mapped[ImageData] = relationship("ImageData", back_populates="images")
+    annotation: Mapped[Annotation] = relationship("Annotation", back_populates="images")
+    gallery_embeddings: Mapped[list[GalleryEmbedding]] = relationship("GalleryEmbedding", back_populates="image")
