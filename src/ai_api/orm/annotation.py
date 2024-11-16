@@ -14,6 +14,6 @@ class Annotation(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_annotation: Mapped[str | None] = mapped_column(String, nullable=True)
-    generated_annotation: Mapped[str] = mapped_column(String)
+    generated_annotation: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    images: Mapped[list["Image"]] = relationship("Image", back_populates="annotation")
+    image: Mapped[Image] = relationship("Image", back_populates="annotation")

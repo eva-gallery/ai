@@ -9,7 +9,7 @@ from .base import Base
 
 
 if TYPE_CHECKING:
-    from .image_data import ImageData
+    from .modified_image_data import ModifiedImageData
     from .annotation import Annotation
     from .gallery_embedding import GalleryEmbedding
 
@@ -21,6 +21,6 @@ class Image(Base):
     image_data_id: Mapped[int] = mapped_column(ForeignKey("image_data.id"))
     annotation_id: Mapped[int] = mapped_column(ForeignKey("annotation.id"))
 
-    image_data: Mapped[ImageData] = relationship("ImageData", back_populates="images")
-    annotation: Mapped[Annotation] = relationship("Annotation", back_populates="images")
-    gallery_embeddings: Mapped[list[GalleryEmbedding]] = relationship("GalleryEmbedding", back_populates="image")
+    image_data: Mapped[ModifiedImageData] = relationship("ModifiedImageData", back_populates="images")
+    annotation: Mapped[Annotation] = relationship("Annotation", back_populates="image")
+    gallery_embedding: Mapped[GalleryEmbedding] = relationship("GalleryEmbedding", back_populates="image")

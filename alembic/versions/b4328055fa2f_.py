@@ -22,10 +22,9 @@ def upgrade() -> None:
     # Create image_data table
     op.create_table('image_data',
         sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column('original_image_uuid', sa.UUID(as_uuid=True), nullable=False),
-        sa.Column('modified_image_uuid', sa.UUID(as_uuid=True), nullable=True),
-        sa.Column('image_metadata', sa.JSON(), nullable=True),
-        sa.Column('md5_hash', sa.String(length=32), nullable=True),
+        sa.Column('original_image_id', sa.Integer(), nullable=False),
+        sa.Column('image_metadata', sa.JSON(), nullable=False),
+        sa.Column('md5_hash', sa.String(length=32), nullable=False),
         sa.PrimaryKeyConstraint('id')
     )
 
@@ -33,30 +32,7 @@ def upgrade() -> None:
     op.create_table('annotation',
         sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
         sa.Column('user_annotation', sa.String(), nullable=True),
-        sa.Column('generated_annotation', sa.String(), nullable=False),
-        sa.PrimaryKeyConstraint('id')
-    )
-
-    # Create captioning_model table
-    op.create_table('captioning_model',
-        sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column('name', sa.String(), nullable=False),
-        sa.PrimaryKeyConstraint('id')
-    )
-
-    # Create image_embedding_model table
-    op.create_table('image_embedding_model',
-        sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column('name', sa.String(), nullable=False),
-        sa.Column('vector_length', Vector(1536), nullable=False),
-        sa.PrimaryKeyConstraint('id')
-    )
-
-    # Create text_embedding_model table
-    op.create_table('text_embedding_model',
-        sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column('name', sa.String(), nullable=False),
-        sa.Column('vector_length', Vector(512), nullable=False),
+        sa.Column('generated_annotation', sa.String(), nullable=True),
         sa.PrimaryKeyConstraint('id')
     )
 
@@ -73,18 +49,13 @@ def upgrade() -> None:
     # Create gallery_embedding table
     op.create_table('gallery_embedding',
         sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column('image_embedding_model_id', sa.Integer(), nullable=False),
-        sa.Column('text_embedding_model_id', sa.Integer(), nullable=False),
-        sa.Column('captioning_model_id', sa.Integer(), nullable=False),
+        sa.Column('image_id', sa.Integer(), nullable=False),
         sa.Column('image_embedding', Vector(1536), nullable=False),
         sa.Column('watermarked_image_embedding', Vector(1536), nullable=False),
-        sa.Column('text_embedding', Vector(512), nullable=False),
         sa.Column('metadata_embedding', Vector(512), nullable=False),
-        sa.Column('image_id', sa.Integer(), nullable=False),
-        sa.ForeignKeyConstraint(['captioning_model_id'], ['captioning_model.id'], ),
-        sa.ForeignKeyConstraint(['image_embedding_model_id'], ['image_embedding_model.id'], ),
+        sa.Column('user_caption_embedding', Vector(512), nullable=True),
+        sa.Column('generated_caption_embedding', Vector(512), nullable=True),
         sa.ForeignKeyConstraint(['image_id'], ['image.id'], ),
-        sa.ForeignKeyConstraint(['text_embedding_model_id'], ['text_embedding_model.id'], ),
         sa.PrimaryKeyConstraint('id')
     )
 
@@ -92,8 +63,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table('gallery_embedding')
     op.drop_table('image')
-    op.drop_table('text_embedding_model')
-    op.drop_table('image_embedding_model')
-    op.drop_table('captioning_model')
     op.drop_table('annotation')
     op.drop_table('image_data')

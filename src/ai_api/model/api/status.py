@@ -3,9 +3,10 @@ from enum import Enum
 from pydantic import BaseModel
 
 
-class ResponseType(Enum):
+class ImageDuplicateStatus(Enum):
     OK = "ok"
     EXISTS = "exists"
+    PLAGIARIZED = "plagiarized"
 
-class ResponseStatus(BaseModel):
-    status: ResponseType
+class ImageDuplicateResponse(BaseModel):
+    status: ImageDuplicateStatus

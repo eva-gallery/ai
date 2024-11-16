@@ -1,4 +1,8 @@
-service: "ai_api.main:svc"
+name: "evagallery_ai_api"
+service: "ai_api.main:APIService"
+labels:
+  owner: "slobodaapl"
+  project: "evagallery"
 include:
   - "*.py"
   - "alembic/**/*"
@@ -26,3 +30,8 @@ python:
     - httpx
     - pillow
     - aiosqlite
+    - aiohttp
+docker:
+  distro: "debian"
+  python_version: "3.11"
+  setup_script: "./setup.py"
