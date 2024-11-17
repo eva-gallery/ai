@@ -1,11 +1,18 @@
 #!/usr/bin/env python
 
+import os
+
 from huggingface_hub import snapshot_download
 
 from ai_api import settings
 from ai_api.util.logger import get_logger
 
 logger = get_logger()
+
+
+if os.getenv("HF_HOME") is None:
+    os.environ["HF_HOME"] = settings.model.cache_dir or os.getcwd() + "/cache"
+
 
 # Pre-download models by instantiating them once
 logger.info("Pre-downloading models...")

@@ -12,6 +12,7 @@ include:
 python:
   lock_packages: true
   packages:
+    - accelerate
     - bentoml[tracing_otlp]
     - dynaconf
     - sentence-transformers

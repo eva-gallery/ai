@@ -21,11 +21,11 @@ class GalleryEmbedding(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     image_id: Mapped[int] = mapped_column(ForeignKey("image.id"))
     
-    image_embedding: Mapped[list[float]] = mapped_column(Vector(settings.model.embedding.image.vector_length))
-    watermarked_image_embedding: Mapped[list[float]] = mapped_column(Vector(settings.model.embedding.image.vector_length))
-    metadata_embedding: Mapped[list[float]] = mapped_column(Vector(settings.model.embedding.metadata.vector_length))
-    user_caption_embedding: Mapped[list[float] | None] = mapped_column(Vector(settings.model.embedding.text.vector_length), nullable=True)
-    generated_caption_embedding: Mapped[list[float] | None] = mapped_column(Vector(settings.model.embedding.text.vector_length), nullable=True)
+    image_embedding: Mapped[list[float]] = mapped_column(Vector(settings.model.embedding.dimension))
+    watermarked_image_embedding: Mapped[list[float]] = mapped_column(Vector(settings.model.embedding.dimension))
+    metadata_embedding: Mapped[list[float]] = mapped_column(Vector(settings.model.embedding.dimension))
+    user_caption_embedding: Mapped[list[float] | None] = mapped_column(Vector(settings.model.embedding.dimension), nullable=True)
+    generated_caption_embedding: Mapped[list[float] | None] = mapped_column(Vector(settings.model.embedding.dimension), nullable=True)
     
     image: Mapped["Image"] = relationship("Image", back_populates="gallery_embeddings")
 

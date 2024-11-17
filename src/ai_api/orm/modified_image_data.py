@@ -20,6 +20,6 @@ class ModifiedImageData(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     original_image_id: Mapped[int] = mapped_column(Integer)
     image_metadata: Mapped[dict] = mapped_column(JSONB)
-    md5_hash: Mapped[str] = mapped_column(String(32))
+    image_hash: Mapped[str] = mapped_column(String(8))
 
     image: Mapped["Image"] = relationship("Image", back_populates="image_data")

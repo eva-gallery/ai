@@ -21,7 +21,7 @@ from ai_api.orm.annotation import Annotation
 from ai_api.orm.gallery_embedding import GalleryEmbedding
 from ai_api.orm.image import Image
 from ai_api.util.logger import get_logger
-from ai_api.services.embedding_service import EmbeddingService
+from ai_api.services.inference_service import InferenceService
 from ai_api.orm import ModifiedImageData
 
 
@@ -32,31 +32,40 @@ from ai_api.orm import ModifiedImageData
 )
 class APIService:
     def __init__(self):
-        self.embedding_service = bentoml.depends(EmbeddingService)
+        self.embedding_service = bentoml.depends(InferenceService)
         self.logger = get_logger()
+        self.db_healthy = False
+        asyncio.run_coroutine_threadsafe(self._init_postgres(), asyncio.get_event_loop())
         
+    async def _init_postgres(self) -> None:
         try:
             AIOPostgres(url=settings.postgres.url)
+            self._migrate_database()
         except Exception as e:
             self.logger.error(f"Failed to initialize Postgres client: {e}")
             raise e
+        self.db_healthy = True
+    
+    def _migrate_database(self) -> None:
+        """Run alembic migrations to head revision"""
+        from alembic.config import Config
+        from alembic import command
+        
+        alembic_cfg = Config("alembic.ini")
+        command.upgrade(alembic_cfg, "head")
     
     async def _save_and_notify(self,
                                image_id: int,
                                duplicate_status: ImageDuplicateStatus,
-                               image_embedding: list[float],
+                               most_similar_image_id: Optional[int] = None,
                                image_data_model: Optional[ModifiedImageData] = None,
                                gallery_embedding_model: Optional[GalleryEmbedding] = None,
                                annotation_model: Optional[Annotation] = None) -> None:
         
         if duplicate_status is not ImageDuplicateStatus.OK:
-            async with AIOPostgres().session() as conn:
-                stmt = select(GalleryEmbedding.image_id).order_by(GalleryEmbedding.image_embedding_distance_to(image_embedding))
-                result = (await conn.execute(stmt)).scalar_one_or_none()
-                
             patch_request = BackendPatchRequest(
                 image_id=image_id,
-                closest_match_id=result,
+                closest_match_id=most_similar_image_id,
                 image_duplicate_status=duplicate_status
             )
             
@@ -105,39 +114,7 @@ class APIService:
                 if response.status != 200:
                     self.logger.error(f"Failed to patch backend: {await response.text()}")
                     raise Exception(f"Failed to patch backend for image id {image_data_model.original_image_id}")
-
-    @bentoml.api(route="/image/search_query", input_spec=SearchRequest, output_spec=SearchResponse)  # type: ignore
-    async def search_query(self, query: str, count: int, page: int) -> SearchResponse:
-        embedded_text: np.ndarray = (await self.embedding_service.embed_text.async_run([query]))[0]
-
-        async with AIOPostgres() as conn:
-            stmt = (
-                select(GalleryEmbedding.image_id)
-                .order_by(GalleryEmbedding.image_embedding_distance_to(embedded_text))
-                .limit(count)
-                .offset(page * count)
-            )
-            
-            results = (await conn.execute(stmt)).scalars().all()
-
-        return SearchResponse(image_id=cast(list[int], results))
     
-    @bentoml.api(route="/image/search_image", input_spec=ImageSearchRequest, output_spec=ImageSearchResponse)  # type: ignore
-    async def search_image(self, image_id: int, count: int, page: int) -> ImageSearchResponse:
-        embedded_image: np.ndarray = (await self.embedding_service.embed_image.async_run([image_id]))[0]
-        
-        async with AIOPostgres() as conn:
-            stmt = (
-                select(GalleryEmbedding.image_id)
-                .order_by(GalleryEmbedding.image_embedding_distance_to(embedded_image))
-                .limit(count)
-                .offset(page * count)
-            )
-
-            results = (await conn.execute(stmt)).scalars().all()
-
-        return ImageSearchResponse(image_id=cast(list[int], results))
-
     async def _process_image_data(
         self,
         image_pil: PILImage.Image,
@@ -145,44 +122,53 @@ class APIService:
         ai_generated_status: AIGeneratedStatus,
         metadata: dict
     ) -> None:
+        # Generate a shorter hash that will fit in 32 bits
+        original_hash = hashlib.sha256(image_pil.tobytes()).hexdigest()[:8]  # First 32 bits (8 hex chars)
+        
+        image_embed = (await self.embedding_service.embed_image(image_pil))[0]
         
         duplicate_status = ImageDuplicateStatus.OK
+        most_similar_image_id = None
+        
         if metadata.get("ignore_duplicate_check", False) in (False, None):
             # Check for duplicates
             watermark_result, ai_watermark = await asyncio.gather(
-                self.embedding_service.check_watermark.async_run(image_pil),
-                self.embedding_service.check_ai_watermark.async_run(image_pil)
+                self.embedding_service.check_watermark([image_pil]),
+                self.embedding_service.check_ai_watermark([image_pil])
             )
             has_watermark, watermark = watermark_result[0]
             ai_watermark = ai_watermark[0]
             
-            if has_watermark or ai_watermark:
+            if ai_watermark:
+                duplicate_status = ImageDuplicateStatus.PLAGIARIZED
+            elif has_watermark and watermark:
                 async with AIOPostgres().session() as conn:
                     result = await conn.execute(
                         select(ModifiedImageData)
-                        .filter_by(md5_hash=watermark)
+                        .filter_by(image_hash=watermark)  # Changed from md5_hash to image_hash
                     )
                     if result.scalar_one_or_none():
-                        duplicate_status = ImageDuplicateStatus.EXISTS
-                if ai_watermark:
-                    duplicate_status = ImageDuplicateStatus.PLAGIARIZED
-                    
-        image_embed = await self.embedding_service.embed_image.async_run([image_pil])
-        image_embed = image_embed[0]
+                        result = await conn.execute(
+                            select(GalleryEmbedding.image_embedding, GalleryEmbedding.image_id)
+                            .order_by(GalleryEmbedding.image_embedding_distance_to(image_embed))
+                        )
+                        float_vec, most_similar_image_id = (await (await result.scalars()).one())  # type: ignore
+                        # check if dot product is more than 95% similar
+                        if np.dot(image_embed, float_vec) > settings.model.detection.threshold:
+                            duplicate_status = ImageDuplicateStatus.EXISTS
         
         if duplicate_status is not ImageDuplicateStatus.OK:
             await self._save_and_notify(
                 duplicate_status=duplicate_status,
                 image_id=artwork_id,
-                image_embedding=image_embed
+                most_similar_image_id=most_similar_image_id
             )
             return
         
         # Get embeddings and caption
-        original_md5 = hashlib.md5(image_pil.tobytes()).hexdigest()
         generated_image_caption, metadata_embedding = await asyncio.gather(
-            self.embedding_service.generate_caption.async_run(image_pil),
-            self.embedding_service.embed_text.async_run([str(metadata)])
+            self.embedding_service.generate_caption(image_pil),
+            self.embedding_service.embed_text([str(metadata)])
         )
         generated_image_caption = generated_image_caption[0]
         metadata_embedding = metadata_embedding[0]
@@ -191,14 +177,14 @@ class APIService:
         watermarked_image_pil = image_pil
         watermarked_image_embed = None
         if ai_generated_status == AIGeneratedStatus.NOT_GENERATED:
-            ai_generated_status, _ = await self.embedding_service.detect_ai_generation.async_run(image_pil)
+            ai_generated_status = (await self.embedding_service.detect_ai_generation(image_pil))[0]
             if ai_generated_status == AIGeneratedStatus.NOT_GENERATED:
-                watermarked_image_pil = await self.embedding_service.add_ai_watermark.async_run(image_pil)
+                watermarked_image_pil = (await self.embedding_service.add_ai_watermark(image_pil))[0]
         
-        watermarked_image_pil = await self.embedding_service.add_watermark.async_run(watermarked_image_pil, original_md5)
+        watermarked_image_pil = (await self.embedding_service.add_watermark(watermarked_image_pil, original_hash))[0]
         watermarked_image_embed, generated_caption_embed = await asyncio.gather(
-            self.embedding_service.embed_image.async_run([watermarked_image_pil]),
-            self.embedding_service.embed_text.async_run([generated_image_caption])
+            self.embedding_service.embed_image([watermarked_image_pil]),
+            self.embedding_service.embed_text([generated_image_caption])
         )
         watermarked_image_embed = watermarked_image_embed[0]
         generated_caption_embed = generated_caption_embed[0]
@@ -206,7 +192,7 @@ class APIService:
         user_caption = metadata.get('caption')
         user_caption_embed = None
         if user_caption:
-            user_caption_embed = await self.embedding_service.embed_text.async_run([user_caption])
+            user_caption_embed = (await self.embedding_service.embed_text([user_caption]))[0]
 
         metadata['ai_generated'] = ai_generated_status
         metadata['duplicate_status'] = duplicate_status
@@ -215,11 +201,10 @@ class APIService:
         await self._save_and_notify(
             duplicate_status=duplicate_status,
             image_id=artwork_id,
-            image_embedding=image_embed,
             image_data_model=ModifiedImageData(
                 original_image_id=artwork_id,
                 image_metadata=metadata,
-                md5_hash=original_md5
+                image_hash=original_hash
             ),
             gallery_embedding_model=GalleryEmbedding(
                 image_embedding=image_embed,
@@ -233,6 +218,40 @@ class APIService:
                 generated_annotation=generated_image_caption
             )
         )
+
+    @bentoml.api(route="/image/search_query", input_spec=SearchRequest, output_spec=SearchResponse)  # type: ignore
+    async def search_query(self, query: str, count: int, page: int) -> SearchResponse:
+        embedded_text: np.ndarray = (await self.embedding_service.embed_text([query]))[0]
+
+        async with AIOPostgres() as conn:
+            stmt = (
+                select(GalleryEmbedding.image_id)
+                .order_by(GalleryEmbedding.image_embedding_distance_to(embedded_text))
+                .limit(count)
+                .offset(page * count)
+            )
+            
+            result = await conn.execute(stmt)
+            results = await (await result.scalars()).all()  # type: ignore
+
+        return SearchResponse(image_id=list(results))
+    
+    @bentoml.api(route="/image/search_image", input_spec=ImageSearchRequest, output_spec=ImageSearchResponse)  # type: ignore
+    async def search_image(self, image_id: int, count: int, page: int) -> ImageSearchResponse:
+        embedded_image: np.ndarray = (await self.embedding_service.embed_image([image_id]))[0]
+        
+        async with AIOPostgres() as conn:
+            stmt = (
+                select(GalleryEmbedding.image_id)
+                .order_by(GalleryEmbedding.image_embedding_distance_to(embedded_image))
+                .limit(count)
+                .offset(page * count)
+            )
+
+            result = await conn.execute(stmt)
+            results = await (await result.scalars()).all()  # type: ignore
+
+        return ImageSearchResponse(image_id=list(results))
 
     @bentoml.api(route="/image/process", input_spec=ProcessImageRequest)  # type: ignore
     async def process_image(
@@ -258,6 +277,10 @@ class APIService:
     @bentoml.api(route="/healthz")  # type: ignore
     async def healthz(self, ctx: bentoml.Context) -> dict[str, str]:
         """Basic health check endpoint."""
+        if not self.db_healthy:
+            ctx.response.status_code = 503
+            return {"status": "unhealthy"}
+        
         ctx.response.status_code = 200
         return {"status": "healthy"}
 
@@ -273,7 +296,7 @@ class APIService:
                 await conn.execute(select(1))
             
             # Test embedding service
-            await self.embedding_service.readyz.async_run()
+            await self.embedding_service.readyz()
             
             ctx.response.status_code = 200
             return {"status": "ready"}

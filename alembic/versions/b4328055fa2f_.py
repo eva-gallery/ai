@@ -24,7 +24,7 @@ def upgrade() -> None:
         sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
         sa.Column('original_image_id', sa.Integer(), nullable=False),
         sa.Column('image_metadata', sa.JSON(), nullable=False),
-        sa.Column('md5_hash', sa.String(length=32), nullable=False),
+        sa.Column('image_hash', sa.String(length=8), nullable=False),
         sa.PrimaryKeyConstraint('id')
     )
 
