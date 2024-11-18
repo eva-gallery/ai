@@ -12,11 +12,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # - uses: bentoml/setup-bentoml-action@v1
-      #   with:
-      #     python-version: '3.12'
-      #     bentoml-version: 'main'
-      #     cache: 'pip'
+      - uses: bentoml/setup-bentoml-action@v1
+        with:
+          python-version: '3.12'
+          bentoml-version: 'main'
+          cache: 'pip'
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -44,10 +44,17 @@ jobs:
       #     bento-tag: EmbeddingSearchService:latest
       #     push: true
       #     tags: evagalleryone/ai:latest
-
+      
       - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: evagalleryone/ai:latest
+        run: |
+          pip install --no-deps -e .
+          bentoml build
+          bentoml containerize evagallery_ai_api:latest --opt progress=plain
+
+
+      # - name: Build and push
+      #   uses: docker/build-push-action@v6
+      #   with:
+      #     context: .
+      #     push: ${{ github.event_name != 'pull_request' }}
+      #     tags: evagalleryone/ai:latest
