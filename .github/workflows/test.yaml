@@ -30,7 +30,7 @@ jobs:
 
       - name: Cache model files
         uses: actions/cache@v3
-        timeout-minutes: 3
+        timeout-minutes: 6
         with:
           path: /tmp/cache
           key: ${{ runner.os }}-model-cache-${{ hashFiles('**/settings.yaml') }}
@@ -40,7 +40,7 @@ jobs:
       - name: Restore virtual environment
         id: cache-venv
         uses: actions/cache/restore@v3
-        timeout-minutes: 3
+        timeout-minutes: 6
         with:
           path: .venv
           key: ${{ runner.os }}-venv-${{ hashFiles('**/pyproject.toml') }}
