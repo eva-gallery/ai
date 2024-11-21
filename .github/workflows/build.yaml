@@ -5,38 +5,59 @@ on:
       - 'main'
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     needs: test
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     env:
-      EVA_AI_MODEL__CACHE_DIR: ${{ github.event.inputs.EVA_AI_MODEL__CACHE_DIR || '/cache' }}
-      EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD: ${{ github.event.inputs.EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD || 'true' }}
       CI: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        timeout-minutes: 3
 
       - name: Setup Python
         uses: actions/setup-python@v5
+        timeout-minutes: 3
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Prepare python dependencies
+      - name: Restore virtual environment
+        uses: actions/cache/restore@v3
+        timeout-minutes: 3
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('**/pyproject.toml') }}
+
+      - name: Source virtual environment
+        timeout-minutes: 1
         run: |
-          pip install --upgrade --root-user-action=ignore -e .
+          source .venv/bin/activate
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+        timeout-minutes: 3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        timeout-minutes: 3
         with:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Build container
+        timeout-minutes: 20
+        env:
+          VIRTUAL_ENV: ${{ github.workspace }}/.venv
+          PATH: ${{ github.workspace }}/.venv/bin:${{ env.PATH }}
+          EVA_AI_MODEL__CACHE_DIR: ${{ github.event.inputs.EVA_AI_MODEL__CACHE_DIR || '/tmp/cache' }}
+          EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD: ${{ github.event.inputs.EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD || 'true' }}
         uses: bentoml/containerize-push-action@v1
         with:
           context: ./

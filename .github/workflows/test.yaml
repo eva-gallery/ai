@@ -5,24 +5,65 @@ on:
       - 'main'
   pull_request:
 
+# Cancel any in-progress job or run
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
+    env:
+      CI: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        timeout-minutes: 3
 
       - name: Setup Python
         uses: actions/setup-python@v5
+        timeout-minutes: 3
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Prepare python dependencies
+      - name: Cache model files
+        uses: actions/cache@v3
+        timeout-minutes: 3
+        with:
+          path: /tmp/cache
+          key: ${{ runner.os }}-model-cache-${{ hashFiles('**/settings.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-model-cache-${{ hashFiles('**/settings.yaml') }}
+
+      - name: Restore virtual environment
+        id: cache-venv
+        uses: actions/cache/restore@v3
+        timeout-minutes: 3
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('**/pyproject.toml') }}
+
+      - name: Create virtual environment and install dependencies
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        timeout-minutes: 5
         run: |
+          python -m venv .venv
+          source .venv/bin/activate
           pip install --upgrade --root-user-action=ignore -e .
+          pip install --upgrade pytest pytest-asyncio pytest-dependency pytest-order pytest-timeout pytest-cov pytest-socket
+
+      - name: Cache virtual environment
+        uses: actions/cache/save@v3
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        timeout-minutes: 3
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('**/pyproject.toml') }}
 
       - name: Run tests
+        timeout-minutes: 10
         run: |
-          pip install --upgrade pytest pytest-asyncio pytest-dependency pytest-order pytest-timeout pytest-cov pytest-socket
+          source .venv/bin/activate
           pytest tests/
