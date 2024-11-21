@@ -1,4 +1,8 @@
 import os
+
+if os.getenv("CI"):
+    exit(0)
+
 from logging.config import fileConfig
 from typing import cast
 

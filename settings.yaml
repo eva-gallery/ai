@@ -1,6 +1,7 @@
 default:
   model:
-    cache_dir: "./models"
+    cache_dir: "/cache"
+    pre_download_during_build: true
     embedding:
       dimension: 512
       image:
@@ -22,8 +23,6 @@ default:
       method: "rivaGan"
 
 development:
-  model:
-    cache_dir: "/models"
   eva_backend:
     url: "http://localhost:8000"
     patch_endpoint: "/ai/image/update"

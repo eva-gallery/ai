@@ -10,6 +10,13 @@ from ai_api.util.logger import get_logger
 logger = get_logger()
 
 
+if not settings.model.pre_download_during_build:
+    logger.info("Skipping model pre-download as it is disabled in settings.yaml")
+    exit(0)
+else:
+    logger.info("Pre-downloading models... WARNING: You likely don't want to do this!! This will make the image large.")
+
+
 if os.getenv("HF_HOME") is None:
     os.environ["HF_HOME"] = settings.model.cache_dir or os.getcwd() + "/cache"
 
