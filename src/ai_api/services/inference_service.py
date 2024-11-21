@@ -155,7 +155,7 @@ class InferenceService:
         max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms
     )
     async def check_ai_watermark(self, images: list[PILImage.Image]) -> list[bool]:
-        ai_watermark_t = self.model_ai_watermark_processor(images, return_tensors="pt").to(self.device)
+        ai_watermark_t = self.model_ai_watermark_processor(images, return_tensors="pt").to(self.model_ai_watermark_decoder.device)
         ai_watermark_pred = self.model_ai_watermark_decoder(**ai_watermark_t).logits[:, 0] < 0  # type: ignore
         pred_bool = ai_watermark_pred > (1 - settings.model.detection.threshold)
         self.logger.debug(f"AI watermark prediction: {pred_bool}")

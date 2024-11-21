@@ -1,0 +1,50 @@
+name: Build
+on:
+  push:
+    branches:
+      - 'main'
+  pull_request:
+
+jobs:
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      EVA_AI_MODEL__CACHE_DIR: ${{ github.event.inputs.EVA_AI_MODEL__CACHE_DIR || '/cache' }}
+      EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD: ${{ github.event.inputs.EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD || 'true' }}
+      CI: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Prepare python dependencies
+        run: |
+          pip install --upgrade --root-user-action=ignore -e .
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build container
+        uses: bentoml/containerize-push-action@v1
+        with:
+          context: ./
+          bentofile: ./bentofile.yaml
+          bento-tag: evagallery_ai_api:latest
+          secret-envs: |
+            EVA_AI_MODEL__CACHE_DIR=EVA_AI_MODEL__CACHE_DIR
+            EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD
+            CI=CI
+          push: false
+          tags: evagalleryone/ai:latest

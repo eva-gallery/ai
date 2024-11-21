@@ -1,9 +1,10 @@
 name: Container
 on:
-  push:
-    branches:
-      - 'main'
-  pull_request:
+#  push:
+#    branches:
+#      - 'main'
+#  pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -54,5 +55,5 @@ jobs:
           context: ./
           bentofile: ./bentofile.yaml
           bento-tag: evagallery_ai_api:latest
-          push: true
+          push: false
           tags: evagalleryone/ai:latest
