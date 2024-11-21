@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
 import asyncio
 from typing import cast, Optional, TYPE_CHECKING
 
@@ -48,6 +49,8 @@ class APIService:
     
     def _migrate_database(self) -> None:
         """Run alembic migrations to head revision"""
+        if os.getenv("CI"):
+            return
         from alembic.config import Config
         from alembic import command
         
