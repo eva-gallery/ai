@@ -26,7 +26,6 @@ jobs:
         timeout-minutes: 3
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: Cache model files
         uses: actions/cache@v3
