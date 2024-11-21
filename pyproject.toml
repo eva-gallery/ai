@@ -49,18 +49,6 @@ priority = "explicit"
 requires = ["poetry-core>=1.5.0"]
 build-backend = "poetry.core.masonry.api"
 
-[tool.pytest.ini_options]
-filterwarnings = [
-    "ignore:pkg_resources is deprecated as an API:DeprecationWarning",
-    "ignore:Please use `import python_multipart` instead.:PendingDeprecationWarning",
-    "ignore::DeprecationWarning",
-    "ignore::FutureWarning"
-]
-pythonpath = ["src"]
-asyncio_mode = "auto"
-addopts = "-vv -x --order-dependencies"
-timeout = 600
-
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]
 
