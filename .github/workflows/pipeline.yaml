@@ -33,7 +33,7 @@ jobs:
             SHOULD_RUN=true
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
             CHANGED_FILES="${{ toJson(github.event.pull_request.changed_files) }}"
-            if echo "$CHANGED_FILES" | jq -e 'any(. | test("^(src/|tests/|pyproject\\.toml|pytest\\.ini|.*/test\\.yaml)"))' > /dev/null; then
+            if echo "$CHANGED_FILES" | jq -e 'any(. | test("^(src/|tests/|pyproject\\.toml|pytest\\.ini|\\.github/workflows/pipeline\\.ya?ml)"))' > /dev/null; then
               echo "Relevant files changed in pull request"
               SHOULD_RUN=true
             else
@@ -74,15 +74,15 @@ jobs:
           echo "Changed files: $CHANGED_FILES"
 
           SHOULD_BUILD=false
-          RELEVANT_FILES_REGEX="^(src/|pyproject\\.toml|bentofile\\.yaml|bento_config\\.yaml|setup\\.py|alembic/|alembic\\.ini|Dockerfile\\.template)"
+          RELEVANT_FILES_REGEX='^(src/|pyproject\.toml|bentofile\.yaml|bento_config\.yaml|setup\.py|alembic/|alembic\.ini|Dockerfile\.template|\.github/workflows/pipeline\.ya?ml)'
 
           if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
-            if echo "$CHANGED_FILES" | jq -e "any(. | test(\"$RELEVANT_FILES_REGEX\"))" > /dev/null; then
+            if echo "$CHANGED_FILES" | jq -e 'any(. | test("'"$RELEVANT_FILES_REGEX"'"))' > /dev/null; then
               echo "Relevant files changed in push to main"
               SHOULD_BUILD=true
             fi
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            if echo "$CHANGED_FILES" | jq -e "any(. | test(\"$RELEVANT_FILES_REGEX\"))" > /dev/null; then
+            if echo "$CHANGED_FILES" | jq -e 'any(. | test("'"$RELEVANT_FILES_REGEX"'"))' > /dev/null; then
               echo "Relevant files changed in pull request"
               SHOULD_BUILD=true
             fi
@@ -100,7 +100,7 @@ jobs:
 
   test:
     needs: check-test-status
-    # if: needs.check-test-status.outputs.should_run == 'true'
+    if: needs.check-test-status.outputs.should_run == 'true'
     timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
@@ -155,8 +155,8 @@ jobs:
           pytest tests/
 
   build:
-    needs: [test]
-    # if: needs.check-build-status.outputs.should_build == 'true'
+    needs: [test, check-build-status]
+    if: needs.check-build-status.outputs.should_build == 'true'
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
@@ -183,9 +183,11 @@ jobs:
 
       - name: Source virtual environment and add to PATH
         timeout-minutes: 1
+        env:
+          VIRTUAL_ENV: ${{ github.workspace }}/.venv
         run: |
           source .venv/bin/activate
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$VIRTUAL_ENV/bin" >> "$GITHUB_PATH"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
