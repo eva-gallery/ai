@@ -8,9 +8,10 @@ include:
   - "alembic/**/*"
   - "settings.yaml"
   - "config.yaml"
-  - alembic.ini
+  - "pyproject.toml"
+  - "alembic.ini"
 python:
-  lock_packages: true
+  lock_packages: false
   packages:
     - accelerate
     - bentoml[tracing_otlp]
