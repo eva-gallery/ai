@@ -26,13 +26,8 @@ jobs:
       - id: check
         name: Check previous test status and changes
         run: |
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            BRANCH="${{ github.head_ref }}"
-            CHANGED_FILES="${{ toJson(github.event.pull_request.changed_files) }}"
-          else
-            BRANCH="${{ github.ref_name }}"
-            CHANGED_FILES="${{ toJson(github.event.head_commit.modified) }}"
-          fi
+          BRANCH="${{ github.ref_name }}"
+          CHANGED_FILES="${{ toJson(github.event.head_commit.modified) }}"
 
           echo "Checking branch: $BRANCH"
           echo "Event type: ${{ github.event_name }}"
@@ -41,7 +36,7 @@ jobs:
           WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/workflows | jq -r '.workflows[] | select(.name=="Pipeline") | .id')
           echo "Workflow ID: $WORKFLOW_ID"
 
-          LAST_RUN=$(gh run list --workflow=$WORKFLOW_ID --branch=$BRANCH --json conclusion,name --jq '[.[] | select(.name == "Pipeline")][0]')
+          LAST_RUN=$(gh run list --workflow=$WORKFLOW_ID --branch=$BRANCH --status=completed --json conclusion,name --jq '[.[] | select(.name == "Pipeline") | {conclusion, name}][0]')
           echo "Last run: $LAST_RUN"
 
           TEST_STATUS=$(echo $LAST_RUN | jq -r '.conclusion')
@@ -50,7 +45,7 @@ jobs:
           SHOULD_RUN=false
 
           if [[ "$TEST_STATUS" != "success" ]]; then
-            echo "Previous test was not successful"
+            echo "Previous test was not successful or no previous run found"
             SHOULD_RUN=true
           elif [[ "${{ github.event_name }}" == "push" ]]; then
             if echo "$CHANGED_FILES" | jq -e 'any(. | test("^(src/|tests/|pyproject\\.toml|pytest\\.ini|.*/test\\.yaml)"))' > /dev/null; then
@@ -84,10 +79,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Chmod setup.py
-        run: |
-          chmod +x ./setup.py
 
       - id: check
         name: Check build status and changes
@@ -210,6 +201,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         timeout-minutes: 3
+
+      - name: Chmod setup.py
+        run: |
+          chmod +x ./setup.py
 
       - name: Setup Python
         uses: actions/setup-python@v5
