@@ -14,7 +14,6 @@ include:
 python:
   lock_packages: false
   pip_args: "--upgrade --no-cache-dir -e ."
-  requirements_txt: "./requirements.txt"
 docker:
   distro: "debian"
   python_version: "3.11"

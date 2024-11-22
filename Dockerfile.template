@@ -16,6 +16,9 @@ ENV EVA_AI_MODEL__CACHE_DIR=$EVA_AI_MODEL__CACHE_DIR
 ENV EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=$EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD
 ENV CI='true'
 
+# Set requirements to be sourced from our file
+ENV REQUIREMENTS_TXT="/home/bentoml/bento/requirements.txt"
+
 {{ super() }}
 
 {% endblock %}
