@@ -1,21 +1,23 @@
 name: Test
 on:
-  push:
+  push: &trigger_paths
     branches:
       - 'main'
-  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'pytest.ini'
+  pull_request: *trigger_paths
 
-# Cancel any in-progress job or run
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   test:
     timeout-minutes: 15
     runs-on: ubuntu-latest
-    env:
-      CI: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4

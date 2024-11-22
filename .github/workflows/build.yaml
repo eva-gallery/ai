@@ -2,19 +2,17 @@ name: Build
 on:
   workflow_run:
     workflows: ["Test"]
-  types:
-    - completed
+    types:
+      - completed
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   build:
     timeout-minutes: 30
     runs-on: ubuntu-latest
-    env:
-      CI: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
