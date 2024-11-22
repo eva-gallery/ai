@@ -24,20 +24,52 @@ jobs:
           fetch-depth: 0
 
       - id: check
-        name: Check previous test status
+        name: Check previous test status and changes
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             BRANCH="${{ github.head_ref }}"
+            CHANGED_FILES="${{ toJson(github.event.pull_request.changed_files) }}"
           else
             BRANCH="${{ github.ref_name }}"
+            CHANGED_FILES="${{ toJson(github.event.head_commit.modified) }}"
           fi
-          
+
+          echo "Checking branch: $BRANCH"
+          echo "Event type: ${{ github.event_name }}"
+          echo "Changed files: $CHANGED_FILES"
+
           WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/workflows | jq -r '.workflows[] | select(.name=="Pipeline") | .id')
-          TEST_STATUS=$(gh run list --workflow=$WORKFLOW_ID --branch=$BRANCH --json conclusion --jq '.[0].conclusion')
+          echo "Workflow ID: $WORKFLOW_ID"
+
+          LAST_RUN=$(gh run list --workflow=$WORKFLOW_ID --branch=$BRANCH --json conclusion,name --jq '[.[] | select(.name == "Pipeline")][0]')
+          echo "Last run: $LAST_RUN"
+
+          TEST_STATUS=$(echo $LAST_RUN | jq -r '.conclusion')
+          echo "Previous test status: $TEST_STATUS"
+
+          SHOULD_RUN=false
+
           if [[ "$TEST_STATUS" != "success" ]]; then
+            echo "Previous test was not successful"
+            SHOULD_RUN=true
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            if echo "$CHANGED_FILES" | jq -e 'any(. | test("^(src/|tests/|pyproject\\.toml|pytest\\.ini|.*/test\\.yaml)"))' > /dev/null; then
+              echo "Relevant files changed in push event"
+              SHOULD_RUN=true
+            fi
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            if echo "$CHANGED_FILES" | jq -e 'any(. | test("^(src/|tests/|pyproject\\.toml|pytest\\.ini|.*/test\\.yaml)"))' > /dev/null; then
+              echo "Relevant files changed in pull request"
+              SHOULD_RUN=true
+            fi
+          fi
+
+          if [[ "$SHOULD_RUN" == "true" ]]; then
             echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "Tests should run"
           else
             echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "Tests should not run"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -45,6 +77,7 @@ jobs:
   check-build-status:
     runs-on: ubuntu-latest
     outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
       first_build: ${{ steps.check.outputs.first_build }}
     steps:
       - name: Checkout repository
@@ -52,51 +85,69 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Chmod setup.py
+        run: |
+          chmod +x ./setup.py
+
       - id: check
-        name: Check if first successful build
+        name: Check build status and changes
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             BRANCH="${{ github.head_ref }}"
+            CHANGED_FILES="${{ toJson(github.event.pull_request.changed_files) }}"
           else
             BRANCH="${{ github.ref_name }}"
+            CHANGED_FILES="${{ toJson(github.event.head_commit.modified) }}"
           fi
-          
+
           echo "Checking branch: $BRANCH"
+          echo "Event type: ${{ github.event_name }}"
+          echo "Changed files: $CHANGED_FILES"
+
           WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/workflows | jq -r '.workflows[] | select(.name=="Pipeline") | .id')
           echo "Found workflow ID: $WORKFLOW_ID"
-          
-          # Get all workflow runs and count those that completed successfully
+
           SUCCESSFUL_BUILDS=$(gh run list --workflow=$WORKFLOW_ID --branch=$BRANCH --json conclusion,status --jq '[.[] | select(.conclusion == "success" and .status == "completed")] | length')
           echo "Number of previous successful builds: $SUCCESSFUL_BUILDS"
-          
+
+          SHOULD_BUILD=false
+
           if [[ "$SUCCESSFUL_BUILDS" == "0" ]]; then
             echo "This is the first successful build"
             echo "first_build=true" >> $GITHUB_OUTPUT
+            SHOULD_BUILD=true
           else
             echo "This is not the first successful build"
             echo "first_build=false" >> $GITHUB_OUTPUT
+          fi
+
+          RELEVANT_FILES_REGEX="^(src/|pyproject\\.toml|bentofile\\.yaml|bento_config\\.yaml|setup\\.py|alembic/|alembic\\.ini|Dockerfile\\.template)"
+
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            if echo "$CHANGED_FILES" | jq -e "any(. | test(\"$RELEVANT_FILES_REGEX\"))" > /dev/null; then
+              echo "Relevant files changed in push to main"
+              SHOULD_BUILD=true
+            fi
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            if [[ "$SHOULD_BUILD" != "true" ]] && echo "$CHANGED_FILES" | jq -e "any(. | test(\"$RELEVANT_FILES_REGEX\"))" > /dev/null; then
+              echo "Relevant files changed in pull request"
+              SHOULD_BUILD=true
+            fi
+          fi
+
+          if [[ "$SHOULD_BUILD" == "true" ]]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "Build should run"
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "Build should not run"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   test:
-    if: |
-      needs.check-test-status.outputs.should_run == 'true' ||
-      github.event_name == 'push' && (
-        contains(github.event.head_commit.modified, 'src/') ||
-        contains(github.event.head_commit.modified, 'tests/') ||
-        contains(github.event.head_commit.modified, 'pyproject.toml') ||
-        contains(github.event.head_commit.modified, 'pytest.ini') ||
-        contains(github.event.head_commit.modified, '**/test.yaml')
-      ) ||
-      github.event_name == 'pull_request' && (
-        contains(github.event.pull_request.changed_files, 'src/') ||
-        contains(github.event.pull_request.changed_files, 'tests/') ||
-        contains(github.event.pull_request.changed_files, 'pyproject.toml') ||
-        contains(github.event.pull_request.changed_files, 'pytest.ini') ||
-        contains(github.event.pull_request.changed_files, '**/test.yaml')
-      )
     needs: check-test-status
+    if: needs.check-test-status.outputs.should_run == 'true'
     timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
@@ -152,26 +203,7 @@ jobs:
 
   build:
     needs: [test]
-    # if: |
-    #   github.event_name == 'push' && github.ref == 'refs/heads/main' && (
-    #     contains(github.event.head_commit.modified, 'src/') ||
-    #     contains(github.event.head_commit.modified, 'pyproject.toml') ||
-    #     contains(github.event.head_commit.modified, 'bentofile.yaml') ||
-    #     contains(github.event.head_commit.modified, 'bento_config.yaml') ||
-    #     contains(github.event.head_commit.modified, 'setup.py') ||
-    #     contains(github.event.head_commit.modified, 'alembic/') ||
-    #     contains(github.event.head_commit.modified, 'alembic.ini')
-    #   ) ||
-    #   github.event_name == 'pull_request' && (
-    #     needs.check-build-status.outputs.first_build == 'true' ||
-    #     contains(github.event.head_commit.modified, 'src/') ||
-    #     contains(github.event.head_commit.modified, 'pyproject.toml') ||
-    #     contains(github.event.head_commit.modified, 'bentofile.yaml') ||
-    #     contains(github.event.head_commit.modified, 'bento_config.yaml') ||
-    #     contains(github.event.head_commit.modified, 'setup.py') ||
-    #     contains(github.event.head_commit.modified, 'alembic/') ||
-    #     contains(github.event.head_commit.modified, 'alembic.ini')
-    #   )
+    # if: needs.check-build-status.outputs.should_build == 'true'
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
@@ -208,13 +240,20 @@ jobs:
         with:
           install: true
 
+      - name: Build bento
+        timeout-minutes: 10
+        env:
+          VIRTUAL_ENV: ${{ github.workspace }}/.venv
+          PATH: ${{ github.workspace }}/.venv/bin:${{ env.PATH }}
+        run: |
+          bentoml build
+
       - name: Build container
         timeout-minutes: 20
         env:
           VIRTUAL_ENV: ${{ github.workspace }}/.venv
           PATH: ${{ github.workspace }}/.venv/bin:${{ env.PATH }}
         run: |
-          bentoml build
           bentoml containerize evagallery_ai_api:latest \
             --image-tag evagalleryone/ai:latest \
             --enable-features tracing-otlp,grpc,monitor-otlp,tracing,grpc-reflection,grpc-channelz \
@@ -246,4 +285,4 @@ jobs:
         with:
           push: true
           tags: evagalleryone/ai:latest
-          cache-from: type=gha 
+          cache-from: type=gha
