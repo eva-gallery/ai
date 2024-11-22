@@ -16,6 +16,11 @@ jobs:
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - id: check
         name: Check Test workflow status
         run: |
@@ -65,7 +70,7 @@ jobs:
         with:
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
+          install: true
       - name: Build container
         timeout-minutes: 20
         env:
