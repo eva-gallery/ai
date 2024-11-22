@@ -214,7 +214,6 @@ jobs:
         env:
           VIRTUAL_ENV: ${{ github.workspace }}/.venv
         run: |
-          chmod +x ./setup.py
           bentoml containerize evagallery_ai_api:latest \
             --debug \
             --image-tag evagalleryone/ai:latest \
