@@ -26,17 +26,32 @@ jobs:
       - id: check
         name: Check previous test status and changes
         run: |
-          BRANCH="${{ github.ref_name }}"
-          CHANGED_FILES="${{ toJson(github.event.head_commit.modified) }}"
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BRANCH="${{ github.head_ref }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            CHANGED_FILES="${{ toJson(github.event.pull_request.changed_files) }}"
+          else
+            BRANCH="${{ github.ref_name }}"
+            HEAD_SHA="${{ github.sha }}"
+            CHANGED_FILES="${{ toJson(github.event.head_commit.modified) }}"
+          fi
 
           echo "Checking branch: $BRANCH"
+          echo "Head SHA: $HEAD_SHA"
           echo "Event type: ${{ github.event_name }}"
           echo "Changed files: $CHANGED_FILES"
 
           WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/workflows | jq -r '.workflows[] | select(.name=="Pipeline") | .id')
           echo "Workflow ID: $WORKFLOW_ID"
 
-          LAST_RUN=$(gh run list --workflow=$WORKFLOW_ID --branch=$BRANCH --status=completed --json conclusion,name --jq '[.[] | select(.name == "Pipeline") | {conclusion, name}][0]')
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # Fetch the latest completed run for the specific head SHA
+            LAST_RUN=$(gh run list --workflow=$WORKFLOW_ID --head=$HEAD_SHA --status=completed --json conclusion,name --jq '.[0]')
+          else
+            # For push events, fetch the latest completed run on the branch
+            LAST_RUN=$(gh run list --workflow=$WORKFLOW_ID --branch=$BRANCH --status=completed --json conclusion,name --jq '.[0]')
+          fi
+
           echo "Last run: $LAST_RUN"
 
           TEST_STATUS=$(echo $LAST_RUN | jq -r '.conclusion')
@@ -243,6 +258,11 @@ jobs:
         run: |
           bentoml build
 
+      - name: Verify Docker Installation
+        run: |
+          docker --version
+          docker info
+
       - name: Build container
         timeout-minutes: 20
         env:
@@ -250,12 +270,13 @@ jobs:
           PATH: ${{ github.workspace }}/.venv/bin:${{ env.PATH }}
         run: |
           bentoml containerize evagallery_ai_api:latest \
+            --debug \
             --image-tag evagalleryone/ai:latest \
             --enable-features tracing-otlp,grpc,monitor-otlp,tracing,grpc-reflection,grpc-channelz \
-            --build-arg EVA_AI_MODEL__CACHE_DIR=${{ vars.EVA_AI_MODEL__CACHE_DIR || '/tmp/cache' }} \
-            --build-arg EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=${{ vars.EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD || 'true' }} \
-            --cache-to type=gha,mode=max \
-            --progress plain
+            --opt build-arg=EVA_AI_MODEL__CACHE_DIR=${{ vars.EVA_AI_MODEL__CACHE_DIR || '/tmp/cache' }} \
+            --opt build-arg=EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=${{ vars.EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD || 'true' }} \
+            --opt cache-to=type=gha,mode=max \
+            --opt progress=plain
 
   push:
     needs: build
