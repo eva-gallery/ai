@@ -16,19 +16,9 @@ ENV EVA_AI_MODEL__CACHE_DIR=$EVA_AI_MODEL__CACHE_DIR
 ENV EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=$EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD
 ENV CI='true'
 
-# Copy src folder, pyproject.toml and poetry.lock to /home/bentoml/bento/env/python
-RUN cp -r /home/bentoml/bento/src /home/bentoml/bento/env/python/ && \
-    cp /home/bentoml/bento/pyproject.toml /home/bentoml/bento/env/python/ && \
-    cp /home/bentoml/bento/poetry.lock /home/bentoml/bento/env/python/
-
 {{ super() }}
 
 {% endblock %}
-
-# Clean up previously copied files
-RUN rm -rf /home/bentoml/bento/src && \
-    rm -f /home/bentoml/bento/pyproject.toml && \
-    rm -f /home/bentoml/bento/poetry.lock
 
 # Unset environment variables after setup
 ENV EVA_AI_MODEL__CACHE_DIR=
