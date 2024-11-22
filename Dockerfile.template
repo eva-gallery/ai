@@ -1,6 +1,12 @@
 {% extends bento_base_template %}
 {% block SETUP_BENTO_BASE_IMAGE %}
 
+{{ super() }}
+
+{% endblock %}
+
+{% block SETUP_BENTO_COMPONENTS %}
+
 # Add build arguments
 ARG EVA_AI_MODEL__CACHE_DIR
 ARG EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD
@@ -14,10 +20,6 @@ RUN chmod +x ./setup.py
 
 {{ super() }}
 
-{% endblock %}
-
-{% block SETUP_BENTO_COMPONENTS %}
-{{ super() }}
 {% endblock %}
 
 # Unset environment variables after setup
