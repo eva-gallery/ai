@@ -36,3 +36,4 @@ docker:
   distro: "debian"
   python_version: "3.11"
   setup_script: "./setup.py"
+  dockerfile_template: "./Dockerfile.template"

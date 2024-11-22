@@ -77,19 +77,18 @@ jobs:
         timeout-minutes: 3
         with:
           install: true
+
       - name: Build container
         timeout-minutes: 20
         env:
           VIRTUAL_ENV: ${{ github.workspace }}/.venv
           PATH: ${{ github.workspace }}/.venv/bin:${{ env.PATH }}
-        uses: bentoml/containerize-push-action@v1
-        with:
-          context: ./
-          bentofile: ./bentofile.yaml
-          bento-tag: evagallery_ai_api:latest
-          secret-envs: |
-            EVA_AI_MODEL__CACHE_DIR=${{ vars.EVA_AI_MODEL__CACHE_DIR || '/tmp/cache' }}
-            EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=${{ vars.EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD || 'true' }}
-            CI='true'
-          push: false
-          tags: evagalleryone/ai:latest
+        run: |
+          bentoml build
+          bentoml containerize evagallery_ai_api:latest \
+            --image-tag evagalleryone/ai:latest \
+            --enable-features tracing-otlp,grpc,monitor-otlp,tracing,grpc-reflection,grpc-channelz \
+            --build-arg EVA_AI_MODEL__CACHE_DIR=${{ vars.EVA_AI_MODEL__CACHE_DIR || '/tmp/cache' }} \
+            --build-arg EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=${{ vars.EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD || 'true' }}
+            --cache-to type=gha,mode=max \
+            --progress plain

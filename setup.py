@@ -37,3 +37,5 @@ else:
     snapshot_download(settings.model.detection.name, cache_dir=settings.model.cache_dir)
 
     logger.info("Model pre-download complete")
+
+del os.environ["CI"]
