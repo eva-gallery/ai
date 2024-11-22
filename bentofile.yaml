@@ -9,9 +9,11 @@ include:
   - "settings.yaml"
   - "config.yaml"
   - "pyproject.toml"
+  - "poetry.lock"
   - "alembic.ini"
 python:
   lock_packages: false
+  pip_args: "-e ."
   packages:
     - accelerate
     - bentoml[tracing_otlp]
