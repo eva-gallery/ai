@@ -12,7 +12,8 @@ include:
   - "poetry.lock"
   - "alembic.ini"
 python:
-  pip_args: "-e ."
+  lock_packages: false
+  pip_args: "--upgrade --no-cache-dir -e ."
   requirements_txt: "./requirements.txt"
 docker:
   distro: "debian"
