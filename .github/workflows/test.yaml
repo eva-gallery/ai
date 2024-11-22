@@ -1,6 +1,6 @@
 name: Test
 on:
-  push: &trigger_paths
+  push:
     branches:
       - 'main'
     paths:
@@ -8,10 +8,17 @@ on:
       - 'tests/**'
       - 'pyproject.toml'
       - 'pytest.ini'
-      - '**/test.yaml
-  pull_request: *trigger_paths
-  workflow_dispatch:
-
+      - '**/test.yaml'
+  pull_request:
+    branches:
+      - 'main'
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'pytest.ini'
+      - '**/test.yaml'
+  
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: true
