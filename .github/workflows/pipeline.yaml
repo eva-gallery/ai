@@ -42,6 +42,35 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  check-build-status:
+    runs-on: ubuntu-latest
+    outputs:
+      first_build: ${{ steps.check.outputs.first_build }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: check
+        name: Check if first build
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BRANCH="${{ github.head_ref }}"
+          else
+            BRANCH="${{ github.ref_name }}"
+          fi
+          
+          WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/workflows | jq -r '.workflows[] | select(.name=="Pipeline") | .id')
+          BUILD_COUNT=$(gh run list --workflow=$WORKFLOW_ID --branch=$BRANCH --json conclusion --jq '[.[] | select(.conclusion != null)] | length')
+          if [[ "$BUILD_COUNT" == "0" ]]; then
+            echo "first_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "first_build=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   test:
     if: |
       needs.check-test-status.outputs.should_run == 'true' ||
@@ -114,7 +143,7 @@ jobs:
           pytest tests/
 
   build:
-    needs: test
+    needs: [test, check-build-status]
     if: |
       github.event_name == 'push' && github.ref == 'refs/heads/main' && (
         contains(github.event.head_commit.modified, 'src/') ||
@@ -126,17 +155,14 @@ jobs:
         contains(github.event.head_commit.modified, 'alembic.ini')
       ) ||
       github.event_name == 'pull_request' && (
-        github.event.action == 'opened' ||
-        github.event.action == 'synchronize' ||
-        github.event.action == 'reopened'
-      ) && (
-        contains(github.event.pull_request.changed_files, 'src/') ||
-        contains(github.event.pull_request.changed_files, 'pyproject.toml') ||
-        contains(github.event.pull_request.changed_files, 'bentofile.yaml') ||
-        contains(github.event.pull_request.changed_files, 'bento_config.yaml') ||
-        contains(github.event.pull_request.changed_files, 'setup.py') ||
-        contains(github.event.pull_request.changed_files, 'alembic/') ||
-        contains(github.event.pull_request.changed_files, 'alembic.ini')
+        needs.check-build-status.outputs.first_build == 'true' ||
+        contains(github.event.head_commit.modified, 'src/') ||
+        contains(github.event.head_commit.modified, 'pyproject.toml') ||
+        contains(github.event.head_commit.modified, 'bentofile.yaml') ||
+        contains(github.event.head_commit.modified, 'bento_config.yaml') ||
+        contains(github.event.head_commit.modified, 'setup.py') ||
+        contains(github.event.head_commit.modified, 'alembic/') ||
+        contains(github.event.head_commit.modified, 'alembic.ini')
       )
     timeout-minutes: 30
     runs-on: ubuntu-latest
