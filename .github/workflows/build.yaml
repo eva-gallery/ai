@@ -1,15 +1,33 @@
 name: Build
 on:
-  workflow_run:
-    workflows: ["Test"]
-    types:
-      - completed
+  pull_request:
+    branches:
+      - 'main'
+    types: [opened, synchronize, reopened]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+
+  check-test-status:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - id: check
+        name: Check Test workflow status
+        run: |
+          TEST_STATUS=$(gh run list --workflow=Test.yml --branch=${{ github.head_ref }} --json conclusion --jq '.[0].conclusion')
+          if [[ "$TEST_STATUS" == "success" ]]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build:
     timeout-minutes: 30
     runs-on: ubuntu-latest
