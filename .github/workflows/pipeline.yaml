@@ -72,8 +72,8 @@ jobs:
           WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/workflows | jq -r '.workflows[] | select(.name=="Pipeline") | .id')
           echo "Found workflow ID: $WORKFLOW_ID"
           
-          BUILD_COUNT=$(gh run list --workflow=$WORKFLOW_ID --branch=$BRANCH --json conclusion --jq '[.[] | select(.conclusion != null)] | length')
-          echo "Number of previous builds: $BUILD_COUNT"
+          BUILD_COUNT=$(gh run list --workflow=$WORKFLOW_ID --branch=$BRANCH --json jobs --jq '[.[] | select(.jobs[].name == "build" and .jobs[].conclusion != "skipped")] | length')
+          echo "Number of previous actual builds: $BUILD_COUNT"
           
           if [[ "$BUILD_COUNT" == "0" ]]; then
             echo "This is the first build"
