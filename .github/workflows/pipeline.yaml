@@ -29,7 +29,7 @@ jobs:
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             BRANCH="${{ github.head_ref }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-            CHANGED_FILES="${{ toJson(github.event.pull_request.changed_files) }}"
+            CHANGED_FILES="${{ toJson(github.event.head_commit.modified) }}"
           else
             BRANCH="${{ github.ref_name }}"
             HEAD_SHA="${{ github.sha }}"
@@ -46,7 +46,7 @@ jobs:
 
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             # Fetch the latest completed run for the specific head SHA
-            LAST_RUN=$(gh run list --workflow=$WORKFLOW_ID --head=$HEAD_SHA --status=completed --json conclusion,name --jq '.[0]')
+            LAST_RUN=$(gh run list --workflow=$WORKFLOW_ID --commit=$HEAD_SHA --status=completed --json conclusion,name --jq '.[0]')
           else
             # For push events, fetch the latest completed run on the branch
             LAST_RUN=$(gh run list --workflow=$WORKFLOW_ID --branch=$BRANCH --status=completed --json conclusion,name --jq '.[0]')
