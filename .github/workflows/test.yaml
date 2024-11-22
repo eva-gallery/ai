@@ -8,7 +8,9 @@ on:
       - 'tests/**'
       - 'pyproject.toml'
       - 'pytest.ini'
+      - '**/test.yaml
   pull_request: *trigger_paths
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}
