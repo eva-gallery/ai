@@ -60,19 +60,19 @@ jobs:
           else
             BRANCH="${{ github.ref_name }}"
           fi
-            
+          
           echo "Checking branch: $BRANCH"
-            WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/workflows | jq -r '.workflows[] | select(.name=="Pipeline") | .id')
-            echo "Found workflow ID: $WORKFLOW_ID"
-            
-            # Get all workflow runs and count those where the build job completed successfully
-            SUCCESSFUL_BUILDS=$(gh run list --workflow=$WORKFLOW_ID --branch=$BRANCH --json jobs --jq '[.[] | select(.jobs != null) | select(.jobs[] | select(.name == "build" and .status == "completed" and .conclusion == "success"))] | length')
-            echo "Number of previous successful builds: $SUCCESSFUL_BUILDS"
-            
-            if [[ "$SUCCESSFUL_BUILDS" == "0" ]]; then
+          WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/workflows | jq -r '.workflows[] | select(.name=="Pipeline") | .id')
+          echo "Found workflow ID: $WORKFLOW_ID"
+          
+          # Get all workflow runs and count those that completed successfully
+          SUCCESSFUL_BUILDS=$(gh run list --workflow=$WORKFLOW_ID --branch=$BRANCH --json conclusion,status --jq '[.[] | select(.conclusion == "success" and .status == "completed")] | length')
+          echo "Number of previous successful builds: $SUCCESSFUL_BUILDS"
+          
+          if [[ "$SUCCESSFUL_BUILDS" == "0" ]]; then
             echo "This is the first successful build"
             echo "first_build=true" >> $GITHUB_OUTPUT
-            else
+          else
             echo "This is not the first successful build"
             echo "first_build=false" >> $GITHUB_OUTPUT
           fi
