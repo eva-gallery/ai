@@ -181,10 +181,11 @@ jobs:
           path: .venv
           key: ${{ runner.os }}-venv-${{ hashFiles('**/pyproject.toml') }}
 
-      - name: Source virtual environment
+      - name: Source virtual environment and add to PATH
         timeout-minutes: 1
         run: |
           source .venv/bin/activate
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -196,19 +197,10 @@ jobs:
         with:
           install: true
 
-      - name: Verify Docker Installation
-        env:
-          VIRTUAL_ENV: ${{ github.workspace }}/.venv
-          PATH: ${{ github.workspace }}/.venv/bin:${{ env.PATH }}
-        run: |
-          docker --version
-          docker info
-
       - name: Build bento
         timeout-minutes: 10
         env:
           VIRTUAL_ENV: ${{ github.workspace }}/.venv
-          PATH: ${{ github.workspace }}/.venv/bin:${{ env.PATH }}
         run: |
           bentoml build
 
@@ -216,7 +208,6 @@ jobs:
         timeout-minutes: 20
         env:
           VIRTUAL_ENV: ${{ github.workspace }}/.venv
-          PATH: ${{ github.workspace }}/.venv/bin:${{ env.PATH }}
         run: |
           bentoml containerize evagallery_ai_api:latest \
             --debug \
