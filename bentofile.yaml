@@ -12,29 +12,8 @@ include:
   - "poetry.lock"
   - "alembic.ini"
 python:
-  lock_packages: false
   pip_args: "-e ."
-  packages:
-    - accelerate
-    - bentoml[tracing_otlp]
-    - dynaconf
-    - sentence-transformers
-    - transformers
-    - torch
-    - torchvision
-    - numpy
-    - alembic
-    - psycopg2-binary
-    - pgvector
-    - loguru
-    - sqlalchemy
-    - asyncpg
-    - invisible-watermark
-    - diffusers
-    - httpx
-    - pillow
-    - aiosqlite
-    - aiohttp
+  requirements_txt: "./requirements.txt"
 docker:
   distro: "debian"
   python_version: "3.11"
