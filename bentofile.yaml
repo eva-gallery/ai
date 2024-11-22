@@ -4,6 +4,7 @@ labels:
   owner: "slobodaapl"
   project: "evagallery"
 include:
+  - "src/**/*"
   - "*.py"
   - "alembic/**/*"
   - "settings.yaml"
