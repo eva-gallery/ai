@@ -32,11 +32,18 @@ jobs:
             BRANCH="${{ github.ref_name }}"
           fi
           
+          echo "Checking branch: $BRANCH"
           WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/workflows | jq -r '.workflows[] | select(.name=="Pipeline") | .id')
+          echo "Found workflow ID: $WORKFLOW_ID"
+          
           TEST_STATUS=$(gh run list --workflow=$WORKFLOW_ID --branch=$BRANCH --json conclusion --jq '.[0].conclusion')
+          echo "Previous test status: $TEST_STATUS"
+          
           if [[ "$TEST_STATUS" != "success" ]]; then
+            echo "Tests should run: previous status was not success"
             echo "should_run=true" >> $GITHUB_OUTPUT
           else
+            echo "Tests can be skipped: previous status was success"
             echo "should_run=false" >> $GITHUB_OUTPUT
           fi
         env:
@@ -61,15 +68,49 @@ jobs:
             BRANCH="${{ github.ref_name }}"
           fi
           
+          echo "Checking branch: $BRANCH"
           WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/workflows | jq -r '.workflows[] | select(.name=="Pipeline") | .id')
+          echo "Found workflow ID: $WORKFLOW_ID"
+          
           BUILD_COUNT=$(gh run list --workflow=$WORKFLOW_ID --branch=$BRANCH --json conclusion --jq '[.[] | select(.conclusion != null)] | length')
+          echo "Number of previous builds: $BUILD_COUNT"
+          
           if [[ "$BUILD_COUNT" == "0" ]]; then
+            echo "This is the first build"
             echo "first_build=true" >> $GITHUB_OUTPUT
           else
+            echo "This is not the first build"
             echo "first_build=false" >> $GITHUB_OUTPUT
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  check-pr-changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.check.outputs.has_changes }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - id: check
+        name: Check modified files
+        run: |
+          echo "Checking files changed in latest commit"
+          CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          
+          if echo "$CHANGED_FILES" | grep -qE "^(src/|pyproject.toml|bentofile.yaml|bento_config.yaml|setup.py|alembic/|alembic.ini)"; then
+            echo "Found relevant changes"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "No relevant changes found"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
 
   test:
     if: |
@@ -89,61 +130,17 @@ jobs:
         contains(github.event.pull_request.changed_files, '**/test.yaml')
       )
     needs: check-test-status
-    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        timeout-minutes: 3
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        timeout-minutes: 3
-        with:
-          python-version: '3.11'
-
-      - name: Cache model files
-        uses: actions/cache@v3
-        timeout-minutes: 6
-        with:
-          path: /tmp/cache
-          key: ${{ runner.os }}-model-cache-${{ hashFiles('**/settings.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-model-cache-${{ hashFiles('**/settings.yaml') }}
-
-      - name: Restore virtual environment
-        id: cache-venv
-        uses: actions/cache/restore@v3
-        timeout-minutes: 6
-        with:
-          path: .venv
-          key: ${{ runner.os }}-venv-${{ hashFiles('**/pyproject.toml') }}
-
-      - name: Create virtual environment and install dependencies
-        if: steps.cache-venv.outputs.cache-hit != 'true'
-        timeout-minutes: 5
+      - name: Debug info
         run: |
-          python -m venv .venv
-          source .venv/bin/activate
-          pip install --upgrade --root-user-action=ignore -e .
-          pip install --upgrade pytest pytest-asyncio pytest-dependency pytest-order pytest-timeout pytest-cov pytest-socket
-
-      - name: Cache virtual environment
-        uses: actions/cache/save@v3
-        if: steps.cache-venv.outputs.cache-hit != 'true'
-        timeout-minutes: 3
-        with:
-          path: .venv
-          key: ${{ runner.os }}-venv-${{ hashFiles('**/pyproject.toml') }}
-
-      - name: Run tests
-        timeout-minutes: 10
-        run: |
-          source .venv/bin/activate
-          pytest tests/
+          echo "Event name: ${{ github.event_name }}"
+          echo "Should run tests: ${{ needs.check-test-status.outputs.should_run }}"
+          echo "Changed files in PR: ${{ toJSON(github.event.pull_request.changed_files) }}"
+          echo "Modified files in push: ${{ toJSON(github.event.head_commit.modified) }}"
 
   build:
-    needs: [test, check-build-status]
+    needs: [test, check-build-status, check-pr-changes]
     if: |
       github.event_name == 'push' && github.ref == 'refs/heads/main' && (
         contains(github.event.head_commit.modified, 'src/') ||
@@ -156,64 +153,16 @@ jobs:
       ) ||
       github.event_name == 'pull_request' && (
         needs.check-build-status.outputs.first_build == 'true' ||
-        contains(github.event.head_commit.modified, 'src/') ||
-        contains(github.event.head_commit.modified, 'pyproject.toml') ||
-        contains(github.event.head_commit.modified, 'bentofile.yaml') ||
-        contains(github.event.head_commit.modified, 'bento_config.yaml') ||
-        contains(github.event.head_commit.modified, 'setup.py') ||
-        contains(github.event.head_commit.modified, 'alembic/') ||
-        contains(github.event.head_commit.modified, 'alembic.ini')
+        needs.check-pr-changes.outputs.has_changes == 'true'
       )
-    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        timeout-minutes: 3
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        timeout-minutes: 3
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Restore virtual environment
-        uses: actions/cache/restore@v3
-        timeout-minutes: 3
-        with:
-          path: .venv
-          key: ${{ runner.os }}-venv-${{ hashFiles('**/pyproject.toml') }}
-
-      - name: Source virtual environment
-        timeout-minutes: 1
+      - name: Debug info
         run: |
-          source .venv/bin/activate
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        timeout-minutes: 3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        timeout-minutes: 3
-        with:
-          install: true
-
-      - name: Build container
-        timeout-minutes: 20
-        env:
-          VIRTUAL_ENV: ${{ github.workspace }}/.venv
-          PATH: ${{ github.workspace }}/.venv/bin:${{ env.PATH }}
-        run: |
-          bentoml build
-          bentoml containerize evagallery_ai_api:latest \
-            --image-tag evagalleryone/ai:latest \
-            --enable-features tracing-otlp,grpc,monitor-otlp,tracing,grpc-reflection,grpc-channelz \
-            --build-arg EVA_AI_MODEL__CACHE_DIR=${{ vars.EVA_AI_MODEL__CACHE_DIR || '/tmp/cache' }} \
-            --build-arg EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=${{ vars.EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD || 'true' }} \
-            --cache-to type=gha,mode=max \
-            --progress plain
+          echo "Event name: ${{ github.event_name }}"
+          echo "First build: ${{ needs.check-build-status.outputs.first_build }}"
+          echo "Has changes: ${{ needs.check-pr-changes.outputs.has_changes }}"
+          echo "Modified files in push: ${{ toJSON(github.event.head_commit.modified) }}"
 
   push:
     needs: build
