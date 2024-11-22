@@ -173,7 +173,6 @@ jobs:
         timeout-minutes: 3
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: Restore virtual environment
         uses: actions/cache/restore@v3
@@ -197,6 +196,14 @@ jobs:
         with:
           install: true
 
+      - name: Verify Docker Installation
+        env:
+          VIRTUAL_ENV: ${{ github.workspace }}/.venv
+          PATH: ${{ github.workspace }}/.venv/bin:${{ env.PATH }}
+        run: |
+          docker --version
+          docker info
+
       - name: Build bento
         timeout-minutes: 10
         env:
@@ -205,25 +212,20 @@ jobs:
         run: |
           bentoml build
 
-      - name: Verify Docker Installation
-        run: |
-          docker --version
-          docker info
-
       - name: Build container
         timeout-minutes: 20
         env:
           VIRTUAL_ENV: ${{ github.workspace }}/.venv
           PATH: ${{ github.workspace }}/.venv/bin:${{ env.PATH }}
-        uses: bentoml/containerize-push-action@v1
-        with:
-          bento-tag: evagallery_ai_api:latest
-          push: false
-          tags: evagalleryone/ai:latest
-          build-args: |
-            EVA_AI_MODEL__CACHE_DIR=${{ vars.EVA_AI_MODEL__CACHE_DIR || '/tmp/cache' }}
-            EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=${{ vars.EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD || 'true' }}
-          cache-to: type=gha,mode=max
+        run: |
+          bentoml containerize evagallery_ai_api:latest \
+            --debug \
+            --image-tag evagalleryone/ai:latest \
+            --enable-features tracing-otlp,grpc,monitor-otlp,tracing,grpc-reflection,grpc-channelz \
+            --opt build-arg=EVA_AI_MODEL__CACHE_DIR=${{ vars.EVA_AI_MODEL__CACHE_DIR || '/tmp/cache' }} \
+            --opt build-arg=EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=${{ vars.EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD || 'true' }} \
+            --opt cache-to=type=gha,mode=max \
+            --opt progress=plain
 
   push:
     needs: build
