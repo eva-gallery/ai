@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+.mypy_cache/
+.pylance/
+.vscode/
+.github/
+poetry.lock
+pyproject.toml
+README.md

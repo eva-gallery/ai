@@ -4,35 +4,41 @@ version = "0.0.1-pre"
 readme = "README.md"
 description = "The API endpoint for interacting with EVA Gallery's AI functionality"
 authors = ["slobodaapl <slobodaapl@gmail.com>"]
-packages = [{ include = "ai_api", from = "src" }]
+packages = [{ include = "ai_api", from = "." }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
-bentoml = "^1.2.19,~1"
-transformers = "^4.41.2,~4"
-asyncpg = "~0"
-sqlalchemy = "~2"
-torch = { version = "~2", source = "pytorch-gpu" }
-torchvision = { version = "~0", source = "pytorch-gpu" }
+accelerate = ">=0.30.0,0.*"
+starlette = ">=0.40.0,0.*"
+bentoml = { version = ">=1.3.11, 1.*", extras = [ "tracing_otlp" ] }
+invisible-watermark = "0.*"
+diffusers = "0.*"
+dynaconf = "3.*"
+transformers = "4.*"
+asyncpg = "0.*"
+sqlalchemy = "2.*"
+torch = { version = "2.*", source = "pytorch-gpu" }
+torchvision = { version = "0.*", source = "pytorch-gpu" }
 numpy = "1.25.2"
-aiosqlite = "~0"
-sentence-transformers = "^2.1.0,~2"
-pgvector = "~0"
-loguru = "~0"
-alembic = "~1"
-psycopg2-binary = "~2"
+aiosqlite = "0.*"
+aiohttp = ">=3.10.11,3.*"
+sentence-transformers = "2.*"
+pgvector = "0.*"
+loguru = "0.*"
+alembic = "1.*"
+psycopg2-binary = "2.*"
 
 [tool.poetry.group.dev.dependencies]
-alembic = "~1"
-pre-commit = "~3.3"
-bandit = "~1.7"
-pytest = "~7.3"
-pytest-socket = "~0.6"
-pytest-dependency = "~0.5"
-pytest-order = "~1.1"
-pytest-timeout = "~2.1"
-pytest-cov = "~4.0"
-pytest-asyncio = "~0.21"
+alembic = "1.*"
+pre-commit = "3.*"
+bandit = "1.*"
+pytest = "7.*"
+pytest-socket = "0.*"
+pytest-dependency = "0.*"
+pytest-order = "1.*"
+pytest-timeout = "2.*"
+pytest-cov = "4.*"
+pytest-asyncio = "0.*"
 
 [[tool.poetry.source]]
 name = "pytorch-gpu"
@@ -42,12 +48,6 @@ priority = "explicit"
 [build-system]
 requires = ["poetry-core>=1.5.0"]
 build-backend = "poetry.core.masonry.api"
-
-[tool.pytest.ini_options]
-pythonpath = ["src"]
-asyncio_mode = "auto"
-addopts = ""
-timeout = 60
 
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]

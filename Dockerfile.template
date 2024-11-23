@@ -1,0 +1,26 @@
+{% extends bento_base_template %}
+{% block SETUP_BENTO_BASE_IMAGE %}
+
+{{ super() }}
+
+{% endblock %}
+
+{% block SETUP_BENTO_COMPONENTS %}
+
+# Add build arguments
+ARG EVA_AI_MODEL__CACHE_DIR
+ARG EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD
+
+# Set environment variables from build arguments
+ENV EVA_AI_MODEL__CACHE_DIR=$EVA_AI_MODEL__CACHE_DIR
+ENV EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=$EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD
+ENV CI='true'
+
+{{ super() }}
+
+{% endblock %}
+
+# Unset environment variables after setup
+ENV EVA_AI_MODEL__CACHE_DIR=
+ENV EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=
+ENV CI=

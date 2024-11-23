@@ -1,0 +1,249 @@
+name: Pipeline
+on:
+  push:
+    branches:
+      - 'main'
+  pull_request:
+    branches:
+      - 'main'
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-test-status:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: check
+        name: Check changes
+        run: |
+          SHOULD_RUN=false
+
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "Push to main - always run"
+            SHOULD_RUN=true
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            CHANGED_FILES=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --jq '.[].filename')
+            if echo "$CHANGED_FILES" | grep -qE "^(src/|tests/|pyproject\.toml|pytest\.ini|\.github/workflows/pipeline\.ya?ml)"; then
+              echo "Relevant files changed in pull request"
+              SHOULD_RUN=true
+            else
+              echo "No relevant files changed in pull request"
+            fi
+          fi
+
+          if [[ "$SHOULD_RUN" == "true" ]]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "Tests will run"
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "Tests will not run"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  check-build-status:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: check
+        name: Check build status and changes
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            CHANGED_FILES="${{ toJson(github.event.pull_request.changed_files) }}"
+          else
+            CHANGED_FILES="${{ toJson(github.event.head_commit.modified) }}"
+          fi
+
+          echo "Event type: ${{ github.event_name }}"
+          echo "Changed files: $CHANGED_FILES"
+
+          SHOULD_BUILD=false
+          RELEVANT_FILES_REGEX="^(src/|pyproject\\.toml|bentofile\\.yaml|bento_config\\.yaml|setup\\.py|alembic/|alembic\\.ini|Dockerfile\\.template|\\.github/workflows/pipeline\\.ya?ml)"
+
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            if echo "$CHANGED_FILES" | jq -e "any(. | test(\"$RELEVANT_FILES_REGEX\"))" > /dev/null; then
+              echo "Relevant files changed in push to main"
+              SHOULD_BUILD=true
+            fi
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            if echo "$CHANGED_FILES" | jq -e "any(. | test(\"$RELEVANT_FILES_REGEX\"))" > /dev/null; then
+              echo "Relevant files changed in pull request"
+              SHOULD_BUILD=true
+            fi
+          fi
+
+          if [[ "$SHOULD_BUILD" == "true" ]]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "Build should run"
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "Build should not run"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test:
+    #needs: check-test-status
+    #if: needs.check-test-status.outputs.should_run == 'true'
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        timeout-minutes: 3
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        timeout-minutes: 3
+        with:
+          python-version: '3.11'
+
+      - name: Cache model files
+        uses: actions/cache@v3
+        timeout-minutes: 6
+        with:
+          path: /tmp/cache
+          key: ${{ runner.os }}-model-cache-${{ hashFiles('**/settings.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-model-cache-${{ hashFiles('**/settings.yaml') }}
+
+      - name: Restore virtual environment
+        id: cache-venv
+        uses: actions/cache/restore@v3
+        timeout-minutes: 6
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('**/pyproject.toml') }}
+
+      - name: Create virtual environment and install dependencies
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        timeout-minutes: 5
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade --root-user-action=ignore -e .
+          pip install --upgrade pytest pytest-asyncio pytest-dependency pytest-order pytest-timeout pytest-cov pytest-socket
+
+      - name: Cache virtual environment
+        uses: actions/cache/save@v3
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        timeout-minutes: 3
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('**/pyproject.toml') }}
+
+      - name: Run tests
+        timeout-minutes: 10
+        run: |
+          source .venv/bin/activate
+          pytest tests/
+
+  build:
+    needs: [test]
+    #if: needs.check-build-status.outputs.should_build == 'true'
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        timeout-minutes: 3
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        timeout-minutes: 3
+        with:
+          python-version: '3.11'
+
+      - name: Restore virtual environment
+        uses: actions/cache/restore@v3
+        timeout-minutes: 3
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('**/pyproject.toml') }}
+
+      - name: Source virtual environment and add to PATH
+        timeout-minutes: 1
+        env:
+          VIRTUAL_ENV: ${{ github.workspace }}/.venv
+        run: |
+          source .venv/bin/activate
+          echo "$VIRTUAL_ENV/bin" >> "$GITHUB_PATH"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        timeout-minutes: 3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        timeout-minutes: 3
+        with:
+          install: true
+      
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+
+      - name: Export Requirements
+        run: |
+          poetry export -f requirements.txt --output requirements.txt --without-hashes
+
+      - name: Build bento
+        timeout-minutes: 10
+        env:
+          VIRTUAL_ENV: ${{ github.workspace }}/.venv
+        run: |
+          bentoml build
+
+      - name: Build container
+        timeout-minutes: 20
+        env:
+          VIRTUAL_ENV: ${{ github.workspace }}/.venv
+        run: |
+          bentoml containerize evagallery_ai_api:latest \
+            --debug \
+            --image-tag evagalleryone/ai:latest \
+            --enable-features tracing-otlp,grpc,monitor-otlp,tracing,grpc-reflection,grpc-channelz \
+            --opt build-arg=EVA_AI_MODEL__CACHE_DIR=${{ vars.EVA_AI_MODEL__CACHE_DIR || '/tmp/cache' }} \
+            --opt build-arg=EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=${{ vars.EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD || 'true' }} \
+            --opt cache-to=type=gha,mode=max \
+            --opt progress=plain
+
+  push:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        timeout-minutes: 3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        timeout-minutes: 3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push to Docker Hub
+        uses: docker/build-push-action@v5
+        timeout-minutes: 10
+        with:
+          push: true
+          tags: evagalleryone/ai:latest
+          cache-from: type=gha

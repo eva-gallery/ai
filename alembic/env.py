@@ -1,11 +1,17 @@
 import os
+
+if os.getenv("CI"):
+    exit(0)
+
 from logging.config import fileConfig
+from typing import cast
 
 from alembic import context
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
 from ai_api.database.postgres_client import Postgres
+from ai_api import settings
 from ai_api.orm import Base
 
 # this is the Alembic Config object, which provides
@@ -29,7 +35,7 @@ target_metadata = Base.metadata
 # ... etc.
 
 
-Postgres(url=os.environ.get("DATABASE_URL", "sqlite:///./api.db"))  # TODO figure out config source
+Postgres(url=settings.postgres.url)
 
 
 def run_migrations_offline() -> None:
@@ -63,8 +69,8 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    configuration = config.get_section(config.config_ini_section)
-    configuration["sqlalchemy.url"] = os.environ.get("DATABASE_URL", "sqlite:///./api.db")  # TODO figure out config source
+    configuration: dict = cast(dict, config.get_section(config.config_ini_section))
+    configuration["sqlalchemy.url"] = settings.postgres.url
     connectable = engine_from_config(
         configuration, prefix="sqlalchemy.", poolclass=pool.NullPool,
     )
