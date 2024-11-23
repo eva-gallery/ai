@@ -154,7 +154,7 @@ jobs:
           source .venv/bin/activate
           pytest tests/
 
-  build:
+  build_and_push:
     needs: [test]
     #if: needs.check-build-status.outputs.should_build == 'true'
     timeout-minutes: 30
