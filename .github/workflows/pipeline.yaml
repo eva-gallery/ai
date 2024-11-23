@@ -221,9 +221,8 @@ jobs:
             --opt build-arg=EVA_AI_MODEL__CACHE_DIR=${{ vars.EVA_AI_MODEL__CACHE_DIR || '/tmp/cache' }} \
             --opt build-arg=EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=${{ vars.EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD || 'true' }} \
             --opt cache-to=type=gha,mode=max \
-            --opt cache-from=type=gha \
-            --opt progress=plain \
-            --opt load=true
+            --opt load \
+            --opt progress=plain
 
       - name: Login to Docker Hub
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
