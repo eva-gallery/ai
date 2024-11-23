@@ -12,18 +12,12 @@ from PIL import Image as PILImage
 from sqlalchemy import select
 import numpy as np
 
-from ai_api import settings
-from ai_api.database.postgres_client import AIOPostgres
-from ai_api.model.api.status import ImageDuplicateStatus
-from ai_api.model.api.query_search import SearchRequest, SearchResponse
-from ai_api.model.api.image_search import ImageSearchRequest, ImageSearchResponse
-from ai_api.model.api.process import BackendPatchRequest, AIGeneratedStatus, ProcessImageRequest
-from ai_api.orm.annotation import Annotation
-from ai_api.orm.gallery_embedding import GalleryEmbedding
-from ai_api.orm.image import Image
-from ai_api.util.logger import get_logger
-from ai_api.services.inference_service import InferenceService
-from ai_api.orm import ModifiedImageData
+from . import settings
+from .database import AIOPostgres
+from .model import ImageDuplicateStatus, SearchRequest, SearchResponse, ImageSearchRequest, ImageSearchResponse, BackendPatchRequest, AIGeneratedStatus, ProcessImageRequest
+from .orm import Annotation, GalleryEmbedding, Image, ModifiedImageData
+from .util import get_logger
+from .services import InferenceService
 
 
 @bentoml.service(

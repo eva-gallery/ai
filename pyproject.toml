@@ -4,7 +4,7 @@ version = "0.0.1-pre"
 readme = "README.md"
 description = "The API endpoint for interacting with EVA Gallery's AI functionality"
 authors = ["slobodaapl <slobodaapl@gmail.com>"]
-packages = [{ include = "ai_api", from = "src" }]
+packages = [{ include = "ai_api", from = "." }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
