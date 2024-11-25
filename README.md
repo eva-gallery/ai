@@ -19,6 +19,8 @@ This service is a BentoML service that provides an API for the EVA Gallery AI an
 
 The service can be configured through environment variables using the prefix `EVA_AI` followed by category and subcategory with double underscores.
 
+`ENV_FOR_DYNACONF` is set to the environment name, which is either `development`, `production`, or `testing`.
+
 For example:
 - `EVA_AI_BENTOML__API__WORKERS=10` 
 - `EVA_AI_POSTGRES__HOST=localhost`

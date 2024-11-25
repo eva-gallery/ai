@@ -22,6 +22,30 @@ default:
       encoder_name: "imatag/stable-signature-bzh-sdxl-vae-medium"
       decoder_name: "imatag/stable-signature-bzh-detector-resnet18"
       method: "rivaGan"
+  bentoml:
+    service:
+      api:
+        tracing:
+          exporter_type: "otlp"
+          sample_rate: 1.0
+          otlp:
+            protocol: "http"
+            endpoint: "http://localhost:4318/v1/traces"
+            http:
+              certificate_file: null
+              headers:
+                Keep-Alive: "timeout=10, max=1000"
+        traffic:
+          timeout: 120
+          max_concurrency: 50
+        ssl:
+          enabled: false
+        http:
+          port: 80
+        cors:
+          enabled: false
+      embedding:
+        tracing: "@format {this.bentoml.service.api.tracing}"
 
 development:
   test: 1
@@ -32,16 +56,17 @@ development:
   
   bentoml:
     hf_offline: false
-    api:
-      workers: 1
-      resources:
-        cpu: 1
-        memory: 2Gi
-    embedding:
-      workers: 1
-      resources:
-        cpu: 1
-        memory: 4Gi
+    service:
+      api:
+        workers: 1
+        resources:
+          cpu: 1
+          memory: 2Gi
+      embedding:
+        workers: 1
+        resources:
+          cpu: 1
+          memory: 4Gi
     inference:
       fast_batched_op_max_batch_size: 2
       fast_batched_op_max_latency_ms: 100
@@ -64,16 +89,17 @@ production:
   
   bentoml:
     hf_offline: true
-    api:
-      workers: 64
-      resources:
-        threads: 8
-        memory: 16Gi
-    embedding:
-      workers: 8
-      resources:
-        threads: 8
-        memory: 112Gi
+    service:
+      api:
+        workers: 64
+        resources:
+          threads: 8
+          memory: 16Gi
+      embedding:
+        workers: 8
+        resources:
+          threads: 8
+          memory: 112Gi
     inference:
       fast_batched_op_max_batch_size: 64
       fast_batched_op_max_latency_ms: 100
@@ -96,16 +122,17 @@ testing:
   
   bentoml:
     hf_offline: false
-    api:
-      workers: 1
-      resources:
-        cpu: 1
-        memory: 1Gi
-    embedding:
-      workers: 1
-      resources:
-        cpu: 1
-        memory: 4Gi
+    service:
+      api:
+        workers: 1
+        resources:
+          cpu: 1
+          memory: 1Gi
+      embedding:
+        workers: 1
+        resources:
+          cpu: 1
+          memory: 4Gi
     inference:
       fast_batched_op_max_batch_size: 2
       fast_batched_op_max_latency_ms: 100

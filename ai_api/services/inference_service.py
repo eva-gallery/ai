@@ -20,8 +20,7 @@ from ai_api.util.logger import get_logger
 
 @bentoml.service(
     name="evagellery_ai_inference",
-    resources=settings.bentoml.embedding.resources.to_dict(),
-    traffic={"timeout": 300}
+    **settings.bentoml.service.embedding.to_dict()
 )
 class InferenceService:
     

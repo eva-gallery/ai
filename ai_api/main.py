@@ -22,8 +22,7 @@ from .services import InferenceService
 
 @bentoml.service(
     name="evagallery_ai_api",
-    workers=settings.bentoml.api.workers,
-    resources=settings.bentoml.api.resources.to_dict()
+    **settings.bentoml.service.api.to_dict()
 )
 class APIService:
     def __init__(self):
