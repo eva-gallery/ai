@@ -115,7 +115,7 @@ jobs:
           python-version: '3.11'
 
       - name: Cache model files
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         timeout-minutes: 6
         with:
           path: /tmp/cache
@@ -125,7 +125,7 @@ jobs:
 
       - name: Restore virtual environment
         id: cache-venv
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v4
         timeout-minutes: 6
         with:
           path: .venv
@@ -141,7 +141,7 @@ jobs:
           pip install --upgrade pytest pytest-asyncio pytest-dependency pytest-order pytest-timeout pytest-cov pytest-socket
 
       - name: Cache virtual environment
-        uses: actions/cache/save@v3
+        uses: actions/cache/save@v4
         if: steps.cache-venv.outputs.cache-hit != 'true'
         timeout-minutes: 3
         with:
@@ -171,7 +171,7 @@ jobs:
           python-version: '3.11'
 
       - name: Restore virtual environment
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v4
         timeout-minutes: 3
         with:
           path: .venv
