@@ -94,12 +94,12 @@ production:
       api:
         workers: 64
         resources:
-          threads: 8
+          cpu: 8
           memory: 16Gi
       embedding:
         workers: 8
         resources:
-          threads: 8
+          cpu: 16
           memory: 112Gi
     inference:
       fast_batched_op_max_batch_size: 64
