@@ -2,6 +2,7 @@
 **/__pycache__/**
 /cache
 /models
+.pytest_cache
 
 # Ignore dynaconf secret files
 .secrets.*

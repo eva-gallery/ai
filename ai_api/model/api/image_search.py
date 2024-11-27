@@ -9,3 +9,9 @@ class ImageSearchRequest(BaseModel):
 
 class ImageSearchResponse(BaseModel):
     image_id: list[int] = Field(..., description="Image IDs of the most similar images")
+
+
+class RawImageSearchRequest(BaseModel):
+    image: bytes = Field(..., description="Raw image bytes")
+    count: int = Field(default=50, description="Number of results to return")
+    page: int = Field(default=0, description="Page number to return")

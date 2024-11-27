@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Literal, cast
 
 import bentoml
+import torch
 from sentence_transformers import SentenceTransformer
 from torch.cuda import is_available
 from transformers import pipeline, AutoModelForImageClassification, BlipImageProcessor, BlipProcessor, BlipForConditionalGeneration
@@ -26,28 +27,28 @@ class InferenceService:
     
     def __init__(self) -> None:
         self.logger = get_logger()
-        self.device: Literal['cuda'] | Literal['cpu'] = "cuda" if is_available() else "cpu"
+        self.device: torch.device = torch.device(f"cuda:{bentoml.server_context.worker_index - 1}" if is_available() else "cpu")
         self.model_img = SentenceTransformer(settings.model.embedding.image.name, device=self.device, cache_folder=settings.model.cache_dir)
         self.model_text = SentenceTransformer(settings.model.embedding.text.name, device=self.device, cache_folder=settings.model.cache_dir)
         
         # Initialize BLIP captioning model and processor
         self.caption_processor: BlipProcessor = cast(
             BlipProcessor,
-            BlipProcessor.from_pretrained(settings.model.captioning.name, cache_dir=settings.model.cache_dir, device_map="balanced")
+            BlipProcessor.from_pretrained(settings.model.captioning.name, cache_dir=settings.model.cache_dir, device=self.device)
         )
         self.caption_model: BlipForConditionalGeneration = cast(
             BlipForConditionalGeneration,
-            BlipForConditionalGeneration.from_pretrained(settings.model.captioning.name, cache_dir=settings.model.cache_dir)
+            BlipForConditionalGeneration.from_pretrained(settings.model.captioning.name, cache_dir=settings.model.cache_dir, device=self.device)
         )
         
         self.model_ai_watermark = StableDiffusionXLImg2ImgPipeline.from_pretrained(
             settings.model.watermark.diffusion_model,
-            vae=AutoencoderKL.from_pretrained(settings.model.watermark.encoder_name, cache_dir=settings.model.cache_dir),
-            device_map="balanced",
+            vae=AutoencoderKL.from_pretrained(settings.model.watermark.encoder_name, cache_dir=settings.model.cache_dir, device=self.device),
+            device=self.device,
         )
         self.model_ai_watermark_decoder = AutoModelForImageClassification.from_pretrained(
             settings.model.watermark.decoder_name,
-            device_map="balanced",
+            device=self.device,
             cache_dir=settings.model.cache_dir
         )
         self.model_ai_watermark_processor = cast(
@@ -55,7 +56,7 @@ class InferenceService:
             BlipImageProcessor.from_pretrained(
                 settings.model.watermark.decoder_name,
                 cache_dir=settings.model.cache_dir,
-                device_map="balanced",
+                device=self.device,
             )
         )
         
@@ -66,7 +67,7 @@ class InferenceService:
         self.model_ai_detection = pipeline(
             "image-classification",
             settings.model.detection.name,
-            device_map="auto",
+            device=self.device,
         )
         
     @bentoml.api(route="/readyz")
