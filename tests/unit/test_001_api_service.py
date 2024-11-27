@@ -124,14 +124,19 @@ async def test_search_image(api_service: APIService, mock_db_session: AsyncMock)
     with patch('ai_api.main.AIOPostgres') as mock_postgres:
         mock_postgres.return_value.__aenter__.return_value = mock_db_session
         
-        result = await api_service.search_image(image_id=1, count=10, page=0)
-        
-        assert isinstance(result.image_id, list)
-        assert result.image_id == [1, 2, 3]
-        assert all(isinstance(id_, int) for id_ in result.image_id)
+        # Mock the cache function to return a valid embedding
+        with patch.object(api_service, '_search_image_id_cache', new=AsyncMock(return_value=(0.1, 0.2, 0.3))):
+            result = await api_service.search_image(image_id=1, count=10, page=0)
+            
+            assert isinstance(result.image_id, list)
+            assert result.image_id == [1, 2, 3]
+            assert all(isinstance(id_, int) for id_ in result.image_id)
 
 @pytest.mark.asyncio
 async def test_process_image(api_service: APIService, mock_context: MagicMock, sample_image: PILImage.Image) -> None:  # type: ignore
+    # Mock context state
+    mock_context.state = {'queued_processing': 0}
+    
     image_bytes = io.BytesIO()
     sample_image.save(image_bytes, format='PNG')
     
@@ -146,48 +151,45 @@ async def test_process_image(api_service: APIService, mock_context: MagicMock, s
     assert mock_context.response.status_code == 201
 
 @pytest.mark.asyncio
-async def test_process_image_with_duplicate(api_service: APIService, mock_db_session: AsyncMock) -> None:  # type: ignore
+async def test_process_image_with_duplicate(api_service: APIService, mock_context: MagicMock) -> None:  # type: ignore
+    # Mock context state
+    mock_context.state = {'queued_processing': 0}
+    
     # Mock duplicate detection
-    await api_service.embedding_service.check_watermark(return_value=[(True, "test_hash")])
-    mock_db_session.execute.return_value.scalar_one_or_none.return_value = True
+    api_service.embedding_service.check_watermark.return_value = [(True, "test_hash")]
     
     test_image = PILImage.new('RGB', (100, 100))
     image_bytes = io.BytesIO()
     test_image.save(image_bytes, format='PNG')
-    
-    ctx = MagicMock()
     
     await api_service.process_image(
         image=image_bytes.getvalue(),
         artwork_id=1,
         ai_generated_status=AIGeneratedStatus.NOT_GENERATED,
         metadata={"test": "metadata"},
-        ctx=ctx
+        ctx=mock_context
     )
     
-    assert ctx.response.status_code == 201
+    assert mock_context.response.status_code == 201
 
 @pytest.mark.asyncio
-async def test_process_image_with_ai_watermark(api_service: APIService, mock_db_session: AsyncMock) -> None:  # type: ignore
-    # Mock AI watermark detection
-    await api_service.embedding_service.check_ai_watermark(return_value=[True])
+async def test_process_image_with_ai_watermark(api_service: APIService, mock_context: MagicMock) -> None:  # type: ignore
+    # Mock context state
+    mock_context.state = {'queued_processing': 0}
     
-    # Ensure the mock session is used
-    with patch('ai_api.main.AIOPostgres') as mock_postgres:
-        mock_postgres.return_value.__aenter__.return_value = mock_db_session
-        
-        test_image = PILImage.new('RGB', (100, 100))
-        image_bytes = io.BytesIO()
-        test_image.save(image_bytes, format='PNG')
-        
-        ctx = MagicMock()
-        
-        await api_service.process_image(
-            image=image_bytes.getvalue(),
-            artwork_id=1,
-            ai_generated_status=AIGeneratedStatus.NOT_GENERATED,
-            metadata={"test": "metadata"},
-            ctx=ctx
-        )
-        
-        assert ctx.response.status_code == 201
+    # Mock AI watermark detection
+    api_service.embedding_service.check_ai_watermark.return_value = [True]
+    
+    test_image = PILImage.new('RGB', (100, 100))
+    image_bytes = io.BytesIO()
+    test_image.save(image_bytes, format='PNG')
+    
+    await api_service.process_image(
+        image=image_bytes.getvalue(),
+        artwork_id=1,
+        ai_generated_status=AIGeneratedStatus.NOT_GENERATED,
+        metadata={"test": "metadata"},
+        ctx=mock_context
+    )
+    
+    assert mock_context.response.status_code == 201

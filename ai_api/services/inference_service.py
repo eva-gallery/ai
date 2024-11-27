@@ -28,6 +28,7 @@ class InferenceService:
     def __init__(self) -> None:
         self.logger = get_logger()
         self.device: torch.device = torch.device(f"cuda:{bentoml.server_context.worker_index - 1}" if is_available() else "cpu")
+        self.device_map_string = "balanced"  # can't use 'cuda:0', bug in safetensors
         self.model_img = SentenceTransformer(settings.model.embedding.image.name, device=self.device, cache_folder=settings.model.cache_dir)
         self.model_text = SentenceTransformer(settings.model.embedding.text.name, device=self.device, cache_folder=settings.model.cache_dir)
         
@@ -38,17 +39,17 @@ class InferenceService:
         )
         self.caption_model: BlipForConditionalGeneration = cast(
             BlipForConditionalGeneration,
-            BlipForConditionalGeneration.from_pretrained(settings.model.captioning.name, cache_dir=settings.model.cache_dir, device=self.device)
+            BlipForConditionalGeneration.from_pretrained(settings.model.captioning.name, cache_dir=settings.model.cache_dir)
         )
         
         self.model_ai_watermark = StableDiffusionXLImg2ImgPipeline.from_pretrained(
             settings.model.watermark.diffusion_model,
-            vae=AutoencoderKL.from_pretrained(settings.model.watermark.encoder_name, cache_dir=settings.model.cache_dir, device=self.device),
-            device=self.device,
+            vae=AutoencoderKL.from_pretrained(settings.model.watermark.encoder_name, cache_dir=settings.model.cache_dir, device_map=self.device_map_string),
+            device_map=self.device_map_string,
         )
         self.model_ai_watermark_decoder = AutoModelForImageClassification.from_pretrained(
             settings.model.watermark.decoder_name,
-            device=self.device,
+            device_map=self.device_map_string,
             cache_dir=settings.model.cache_dir
         )
         self.model_ai_watermark_processor = cast(
@@ -56,7 +57,7 @@ class InferenceService:
             BlipImageProcessor.from_pretrained(
                 settings.model.watermark.decoder_name,
                 cache_dir=settings.model.cache_dir,
-                device=self.device,
+                device_map=self.device_map_string,
             )
         )
         

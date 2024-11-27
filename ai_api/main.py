@@ -294,7 +294,7 @@ class APIService:
             stmt = (
                 select(GalleryEmbedding.image_id)
                 .where(GalleryEmbedding.image_id != image_id)
-                .order_by(GalleryEmbedding.image_embedding_distance_to(embedding.image_embedding))
+                .order_by(GalleryEmbedding.image_embedding_distance_to(embedding))
                 .limit(count)
                 .offset(page * count)
             )

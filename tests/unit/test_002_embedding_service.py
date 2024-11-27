@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import os
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -14,7 +17,9 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def service():
-    return InferenceService()
+    with patch('bentoml.server_context') as mock_context:
+        mock_context.worker_index = 1  # Mock worker index to be 1
+        return InferenceService()
 
 @pytest.mark.asyncio
 async def test_readyz(service, mock_context):
