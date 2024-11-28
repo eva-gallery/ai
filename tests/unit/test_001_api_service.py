@@ -61,7 +61,7 @@ async def api_service(
     mock_embedding_service: MagicMock,
     mock_db_session: AsyncMock,
     mock_aiohttp_session: AsyncMock
-) -> AsyncGenerator[APIService, None]:  # type: ignore
+) -> AsyncGenerator[APIService, None]:  
     with patch('ai_api.main.bentoml.depends', return_value=mock_embedding_service), \
          patch('ai_api.main.AIOPostgres') as mock_postgres, \
          patch('ai_api.main.aiohttp.ClientSession', return_value=mock_aiohttp_session):
@@ -71,7 +71,7 @@ async def api_service(
         yield service
 
 @pytest.mark.asyncio
-async def test_healthz_healthy(api_service: APIService, mock_context: MagicMock) -> None:  # type: ignore
+async def test_healthz_healthy(api_service: APIService, mock_context: MagicMock) -> None:  
     api_service.db_healthy = True
     result = await api_service.healthz(mock_context)
     
@@ -79,7 +79,7 @@ async def test_healthz_healthy(api_service: APIService, mock_context: MagicMock)
     assert mock_context.response.status_code == 200
 
 @pytest.mark.asyncio
-async def test_healthz_unhealthy(api_service: APIService, mock_context: MagicMock) -> None:  # type: ignore
+async def test_healthz_unhealthy(api_service: APIService, mock_context: MagicMock) -> None:  
     api_service.db_healthy = False
     result = await api_service.healthz(mock_context)
     
@@ -87,7 +87,7 @@ async def test_healthz_unhealthy(api_service: APIService, mock_context: MagicMoc
     assert mock_context.response.status_code == 503
 
 @pytest.mark.asyncio
-async def test_readyz(api_service: APIService, mock_context: MagicMock) -> None:  # type: ignore
+async def test_readyz(api_service: APIService, mock_context: MagicMock) -> None:  
     # Set up the mock context state to return an integer
     mock_context.state.get.return_value = 0
     
@@ -97,7 +97,7 @@ async def test_readyz(api_service: APIService, mock_context: MagicMock) -> None:
     assert mock_context.response.status_code == 200
 
 @pytest.mark.asyncio
-async def test_readyz_not_ready(api_service: APIService, mock_context: MagicMock) -> None:  # type: ignore
+async def test_readyz_not_ready(api_service: APIService, mock_context: MagicMock) -> None:  
     # Mock a high number of queued processes
     mock_context.state.get.return_value = 1000
     
@@ -107,7 +107,7 @@ async def test_readyz_not_ready(api_service: APIService, mock_context: MagicMock
     assert mock_context.response.status_code == 503
 
 @pytest.mark.asyncio
-async def test_search_query(api_service: APIService, mock_db_session: AsyncMock) -> None:  # type: ignore
+async def test_search_query(api_service: APIService, mock_db_session: AsyncMock) -> None:  
     # Ensure the mock session is used
     with patch('ai_api.main.AIOPostgres') as mock_postgres:
         mock_postgres.return_value.__aenter__.return_value = mock_db_session
@@ -119,7 +119,7 @@ async def test_search_query(api_service: APIService, mock_db_session: AsyncMock)
         assert all(isinstance(id_, int) for id_ in result.image_id)
 
 @pytest.mark.asyncio
-async def test_search_image(api_service: APIService, mock_db_session: AsyncMock) -> None:  # type: ignore
+async def test_search_image(api_service: APIService, mock_db_session: AsyncMock) -> None:  
     # Ensure the mock session is used
     with patch('ai_api.main.AIOPostgres') as mock_postgres:
         mock_postgres.return_value.__aenter__.return_value = mock_db_session
@@ -133,7 +133,7 @@ async def test_search_image(api_service: APIService, mock_db_session: AsyncMock)
             assert all(isinstance(id_, int) for id_ in result.image_id)
 
 @pytest.mark.asyncio
-async def test_process_image(api_service: APIService, mock_context: MagicMock, sample_image: PILImage.Image) -> None:  # type: ignore
+async def test_process_image(api_service: APIService, mock_context: MagicMock, sample_image: PILImage.Image) -> None:  
     # Mock context state
     mock_context.state = {'queued_processing': 0}
     
@@ -151,7 +151,7 @@ async def test_process_image(api_service: APIService, mock_context: MagicMock, s
     assert mock_context.response.status_code == 201
 
 @pytest.mark.asyncio
-async def test_process_image_with_duplicate(api_service: APIService, mock_context: MagicMock) -> None:  # type: ignore
+async def test_process_image_with_duplicate(api_service: APIService, mock_context: MagicMock) -> None:  
     # Mock context state
     mock_context.state = {'queued_processing': 0}
     
@@ -173,7 +173,7 @@ async def test_process_image_with_duplicate(api_service: APIService, mock_contex
     assert mock_context.response.status_code == 201
 
 @pytest.mark.asyncio
-async def test_process_image_with_ai_watermark(api_service: APIService, mock_context: MagicMock) -> None:  # type: ignore
+async def test_process_image_with_ai_watermark(api_service: APIService, mock_context: MagicMock) -> None:  
     # Mock context state
     mock_context.state = {'queued_processing': 0}
     

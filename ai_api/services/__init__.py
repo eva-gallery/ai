@@ -1,3 +1,3 @@
-from .inference_service import InferenceService
+from .inference_service import AddWatermarkRequest, InferenceService, InferenceServiceProto
 
-__all__ = ["InferenceService"]
+__all__ = ["AddWatermarkRequest", "InferenceService", "InferenceServiceProto"]

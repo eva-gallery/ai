@@ -1,7 +1,8 @@
-from typing import TypeGuard, Any
+from typing import Any, TypeGuard
 
 from sqlalchemy.ext.asyncio.session import AsyncSession as AsyncSessionType
-from sqlalchemy.orm.session import Session as SyncSessionType, SessionTransaction
+from sqlalchemy.orm.session import Session as SyncSessionType
+from sqlalchemy.orm.session import SessionTransaction
 
 
 def is_async_session(session: Any) -> TypeGuard["AsyncSessionType"]:
