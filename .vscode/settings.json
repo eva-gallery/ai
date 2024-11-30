@@ -10,6 +10,7 @@
     "python.analysis.diagnosticSeverityOverrides": {
         "reportUnknownMemberType": "none",
         "reportUnknownVariableType": "none",
+        "reportUnknownLambdaType": "none",
         "reportUnknownArgumentType": "none",
         "reportMissingTypeStubs": "none"
     }

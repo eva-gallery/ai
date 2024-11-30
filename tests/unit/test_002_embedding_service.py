@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -12,12 +12,12 @@ from ai_api.services.inference_service import InferenceService
 # Skip all tests in this module if CI=true
 pytestmark = pytest.mark.skipif(
     os.getenv("CI") == "true",
-    reason="Tests skipped in CI environment"
+    reason="Tests skipped in CI environment",
 )
 
 @pytest.fixture(scope="module")
 def service():
-    with patch('bentoml.server_context') as mock_context:
+    with patch("bentoml.server_context") as mock_context:
         mock_context.worker_index = 1  # Mock worker index to be 1
         return InferenceService()
 
@@ -29,7 +29,7 @@ async def test_readyz(service, mock_context):
 @pytest.mark.asyncio
 async def test_embed_text(service, mock_numpy_array):
     texts = ["test text"]
-    result = (await service.embed_text(texts))[0]  
+    result = (await service.embed_text(texts))[0]
     assert isinstance(result, list), f"Expected list but got {type(result)}"
     assert len(result) == settings.model.embedding.dimension, f"Expected length {settings.model.embedding.dimension} but got {len(result)}"
 
@@ -37,39 +37,39 @@ async def test_embed_text(service, mock_numpy_array):
 @pytest.mark.asyncio
 async def test_embed_image(service, sample_image):
     images = [sample_image]
-    result = (await service.embed_image(images))[0]  
+    result = (await service.embed_image(images))[0]
     assert isinstance(result, list), f"Expected list but got {type(result)}"
     assert len(result) == settings.model.embedding.dimension, f"Expected length {settings.model.embedding.dimension} but got {len(result)}"
 
 @pytest.mark.asyncio
 async def test_generate_caption(service, sample_image):
     images = [sample_image]
-    result = (await service.generate_caption(images))[0]  
+    result = (await service.generate_caption(images))[0]
     assert isinstance(result, str), f"Expected str but got {type(result)}"
 
 @pytest.mark.asyncio
 async def test_detect_ai_generation(service, sample_image):
     images = [sample_image]
-    result = (await service.detect_ai_generation(images))[0]  
+    result = (await service.detect_ai_generation(images))[0]
     assert result in AIGeneratedStatus, f"Expected {AIGeneratedStatus} but got {result}"
 
 @pytest.mark.asyncio
 async def test_detect_ai_generation_not_generated(service, sample_image):
     images = [sample_image]
-    result = (await service.detect_ai_generation(images))[0]  
+    result = (await service.detect_ai_generation(images))[0]
     assert result in AIGeneratedStatus, f"Expected {AIGeneratedStatus} but got {result}"
 
 @pytest.mark.asyncio
 async def test_check_watermark(service, sample_image):
     images = [sample_image]
-    result = (await service.check_watermark(images))[0]  
+    result = (await service.check_watermark(images))[0]
     assert isinstance(result, tuple), f"Expected tuple but got {type(result)}"
     assert len(result) == 2, f"Expected tuple of length 2 but got length {len(result)}"
     assert isinstance(result[0], bool), f"Expected bool but got {type(result[0])}"
     assert isinstance(result[1], (str, type(None))), f"Expected str or None but got {type(result[1])}"
 
 @pytest.mark.asyncio
-async def test_check_ai_watermark(service, sample_image):    
+async def test_check_ai_watermark(service, sample_image):
     images = [sample_image]
-    result = (await service.check_ai_watermark(images))[0]  
+    result = (await service.check_ai_watermark(images))[0]
     assert isinstance(result, bool), f"Expected bool but got {type(result)}"

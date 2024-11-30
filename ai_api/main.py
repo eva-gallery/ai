@@ -1,3 +1,5 @@
+"""API service for the AI API."""
+
 from __future__ import annotations
 
 import asyncio
@@ -40,7 +42,10 @@ if TYPE_CHECKING:
     **settings.bentoml.service.api.to_dict(),
 )
 class APIService:
+    """API service for the AI API."""
+
     def __init__(self) -> None:
+        """Initialize the API service."""
         self.embedding_service: InferenceServiceProto = cast(InferenceServiceProto, bentoml.depends(InferenceService))
         self.logger = get_logger()
         self.ctx = bentoml.Context()
@@ -49,11 +54,12 @@ class APIService:
         asyncio.run_coroutine_threadsafe(self._init_postgres(), asyncio.get_event_loop())
 
     async def _init_postgres(self) -> None:
+        """Initialize the Postgres client."""
         try:
             AIOPostgres(url=settings.postgres.url)
             self._migrate_database()
         except Exception as e:
-            self.logger.exception(f"Failed to initialize Postgres client: {e}")
+            self.logger.exception("Failed to initialize Postgres client: {e}", e=e)
             raise
         self.db_healthy = True
 
@@ -75,23 +81,26 @@ class APIService:
         gallery_embedding_model: GalleryEmbedding,
         most_similar_image_uuid: UUID | None = None,
     ) -> None:
+        """Save image data to the database and send to the backend."""
         if duplicate_status is not ImageDuplicateStatus.OK:
             patch_request = BackendPatchRequest(
                 image_uuid=image_model.image_uuid,
                 closest_match_uuid=most_similar_image_uuid,
                 image_duplicate_status=duplicate_status,
                 modified_image_uuid=None,
-                image=None,
                 ai_generated_status=image_model.generated_status,
                 metadata=None,
             )
 
+            data = aiohttp.FormData()
+            data.add_field("json", patch_request.model_dump_json(), content_type="application/json")
+
             async with aiohttp.ClientSession() as session, session.patch(
                 settings.eva_backend.backend_image_patch_route,
-                json=patch_request.model_dump_json(),
+                data=data,
             ) as response:
                 if response.status not in (200, 201):
-                    self.logger.error(f"Failed to patch backend: {await response.text()}")
+                    self.logger.error("Failed to patch backend: {response}", response=await response.text())
 
         async with AIOPostgres() as conn:
             # Add and flush image data model
@@ -106,7 +115,7 @@ class APIService:
         # Convert PIL image to bytes for storage
         image_bytes = io.BytesIO()
         image_pil.save(image_bytes, format=image_pil.format or "PNG")
-        image_bytes = image_bytes.getvalue()
+        image_bytes.seek(0)
 
         # Send PATCH request to backend with full model
         patch_request = BackendPatchRequest(
@@ -114,17 +123,21 @@ class APIService:
             image_duplicate_status=ImageDuplicateStatus.OK,
             closest_match_uuid=None,
             modified_image_uuid=image_model.image_uuid,
-            image=image_bytes,
             ai_generated_status=image_model.generated_status,
             metadata=image_model.image_metadata,
         )
 
+        # Send PATCH request to backend with form data
+        data = aiohttp.FormData()
+        data.add_field("json", patch_request.model_dump_json(), content_type="application/json")
+        data.add_field("image", image_bytes, filename="image.png", content_type="image/png")
+
         async with aiohttp.ClientSession() as session, session.patch(
             settings.eva_backend.backend_image_patch_route,
-            json=patch_request.model_dump_json(),
+            data=data,
         ) as response:
             if response.status not in (200, 201):
-                self.logger.error(f"Failed to patch backend: {await response.text()}")
+                self.logger.error("Failed to patch backend: {response}", response=await response.text())
 
     async def _process_image_data(
         self,
@@ -133,6 +146,7 @@ class APIService:
         ai_generated_status: AIGeneratedStatus,
         metadata: dict[str, Any],
     ) -> None:
+        """Process image data by embedding and checking for duplicates and plagiarism, then adding watermarks."""
         # Generate a shorter hash that will fit in 32 bits
         original_hash = hashlib.sha256(image_pil.tobytes()).hexdigest()[:8]  # First 32 bits (8 hex chars)
 
@@ -164,14 +178,14 @@ class APIService:
                             .order_by(GalleryEmbedding.image_embedding_distance_to(image_embed)),
                         )
 
-                        float_vec, image_id = (await (await result.scalars()).one())  # type: ignore
+                        float_vec, image_id = (await (await result.scalars()).one())  # type: ignore[misc]
 
                         result = await conn.execute(
                             select(Image.image_uuid)
                             .where(Image.id == image_id),
                         )
 
-                        most_similar_image_uuid = await (await result.scalars()).one()  # type: ignore
+                        most_similar_image_uuid = await (await result.scalars()).one()  # type: ignore[misc]
 
                         # check if dot product is more than 95% similar
                         if np.dot(image_embed, float_vec) > settings.model.detection.threshold:
@@ -260,10 +274,11 @@ class APIService:
 
     @bentoml.api(
         route="/image/search_query",
-        input_spec=JSON(pydantic_model=SearchRequest),  # type: ignore
-        output_spec=JSON(pydantic_model=SearchResponse),  # type: ignore
+        input_spec=SearchRequest,  # type: ignore[misc]
+        output_spec=SearchResponse,  # type: ignore[misc]
     )
     async def search_query(self, query_request: SearchRequest) -> SearchResponse:
+        """Search for images by query."""
         embedded_text: tuple[float, ...] = await self._get_and_cache_query_embeddings(
             query_request.query,
             self.embedding_service,
@@ -278,7 +293,7 @@ class APIService:
             )
 
             result = await conn.execute(stmt)
-            results = await (await result.scalars()).all()  # type: ignore
+            results = await (await result.scalars()).all()  # type: ignore[misc]
 
         return SearchResponse(image_id=list(results))
 
@@ -289,20 +304,21 @@ class APIService:
             # First get the embedding for the input image_id
             embedding_stmt = select(GalleryEmbedding).where(GalleryEmbedding.image_id == image_id)
             embedding_result = await conn.execute(embedding_stmt)
-            embedding = await embedding_result.scalar_one_or_none()  # type: ignore
+            embedding = await embedding_result.scalar_one_or_none()  # type: ignore[misc]
             return tuple(embedding.image_embedding) if embedding else None
 
     @bentoml.api(
         route="/image/search_image",
-        input_spec=JSON(pydantic_model=ImageSearchRequest),  # type: ignore
-        output_spec=JSON(pydantic_model=ImageSearchResponse),  # type: ignore
+        input_spec=ImageSearchRequest,  # type: ignore[misc]
+        output_spec=ImageSearchResponse,  # type: ignore[misc]
     )
     async def search_image(self, search_request: ImageSearchRequest) -> ImageSearchResponse:
+        """Search for images by image UUID."""
         async with AIOPostgres() as conn:
             # First get the image ID from the UUID
             image_id_stmt = select(Image.id).where(Image.image_uuid == search_request.image_uuid)
             image_id_result = await conn.execute(image_id_stmt)
-            image_id = await image_id_result.scalar_one_or_none()  # type: ignore
+            image_id = await image_id_result.scalar_one_or_none()  # type: ignore[misc]
 
             if image_id is None:
                 self.ctx.response.status_code = 404
@@ -325,31 +341,28 @@ class APIService:
             )
 
             result = await conn.execute(stmt)
-            results = await (await result.scalars()).all()  # type: ignore
+            results = await (await result.scalars()).all()  # type: ignore[misc]
 
         return ImageSearchResponse(image_uuid=list(results))
 
     @bentoml.api(
         route="/image/search_image_raw",
-        input_spec=Multipart(
-            image=File(),
-            request=JSON(pydantic_model=RawImageSearchRequest),  # type: ignore
-        ),
-        output_spec=JSON(pydantic_model=ImageSearchResponse),  # type: ignore
+        output_spec=ImageSearchResponse,  # type: ignore[misc]
     )
     async def search_image_raw(
         self,
-        image: bytes,
+        image: PILImage.Image,
         request: RawImageSearchRequest,
         ctx: bentoml.Context,
     ) -> ImageSearchResponse:
+        """Search for images by raw image bytes."""
         if ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
             ctx.response.status_code = 503
-            return ImageSearchResponse(image_uuid=[])  # type: ignore
+            return ImageSearchResponse(image_uuid=[])  # type: ignore[misc]
 
         ctx.state["queued_processing"] = ctx.state.get("queued_processing", 0) + 1
 
-        image_pil = PILImage.open(io.BytesIO(image)).convert("RGB")
+        image_pil = image.convert("RGB")
         image_embed = (await self.embedding_service.embed_image([image_pil]))[0]
 
         ctx.state["queued_processing"] -= 1
@@ -363,34 +376,34 @@ class APIService:
             )
 
             result = await conn.execute(stmt)
-            results = await (await result.scalars()).all()  # type: ignore
+            results = await (await result.scalars()).all()  # type: ignore[misc]
 
-        return ImageSearchResponse(image_uuid=list(results))  # type: ignore
+        return ImageSearchResponse(image_uuid=list(results))  # type: ignore[misc]
 
     @bentoml.api(
         route="/image/process",
-        input_spec=Multipart(
-            image=File(),
-            request=JSON(pydantic_model=ProcessImageRequest),  # type: ignore
-        ),
+        input_spec=ProcessImageRequest,
     )
     async def process_image(
         self,
-        image: bytes,
-        request: ProcessImageRequest,
+        image: PILImage.Image,
+        image_uuid: str,
+        ai_generated_status: str,
+        metadata: dict[str, Any],
         ctx: bentoml.Context,
     ) -> None:
+        """Process an image."""
         if ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
             ctx.response.status_code = 503
             return
 
-        image_pil = PILImage.open(io.BytesIO(image)).convert("RGB")
+        image_pil = image.convert("RGB")
 
         task = asyncio.create_task(self._process_image_data(
             image_pil=image_pil,
-            artwork_uuid=str(request.image_uuid),
-            ai_generated_status=request.ai_generated_status,
-            metadata=request.metadata or {},
+            artwork_uuid=image_uuid,
+            ai_generated_status=AIGeneratedStatus(ai_generated_status),
+            metadata=metadata or {},
         ))
         self.background_tasks.add(task)
         task.add_done_callback(self.background_tasks.discard)
@@ -424,10 +437,10 @@ class APIService:
             try:
                 await asyncio.wait_for(self.embedding_service.readyz(), timeout=30.0)
             except asyncio.TimeoutError:
-                self.logger.error("Embedding service readiness check timed out")
+                self.logger.exception("Embedding service readiness check timed out")
                 raise
         except Exception as e:
-            self.logger.exception(f"Readiness check failed: {e}")
+            self.logger.exception("Readiness check failed: {e}", e=e)
             ctx.response.status_code = 503
             raise
         else:

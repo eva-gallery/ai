@@ -1,3 +1,5 @@
+"""The AI API module setup."""
+
 import os
 from pathlib import Path
 

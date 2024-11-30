@@ -1,3 +1,5 @@
+"""The module with Pydantic models for the API's requests and responses."""
+
 from .api import (
     AIGeneratedStatus,
     BackendPatchRequest,

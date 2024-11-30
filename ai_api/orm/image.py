@@ -1,3 +1,5 @@
+"""The ORM model for the image."""
+
 from __future__ import annotations
 
 import uuid
@@ -15,6 +17,8 @@ if TYPE_CHECKING:
 
 
 class Image(Base):
+    """The ORM model for the image."""
+
     __tablename__ = "image"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

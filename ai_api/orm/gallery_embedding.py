@@ -1,3 +1,6 @@
+# type: ignore[import-cycle]
+"""The ORM model for the gallery embedding."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -17,6 +20,8 @@ if TYPE_CHECKING:
 
 
 class GalleryEmbedding(Base):
+    """The ORM model for the gallery embedding."""
+
     __tablename__ = "gallery_embedding"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -32,20 +37,25 @@ class GalleryEmbedding(Base):
 
     @classmethod
     def image_embedding_distance_to(cls, vector: Sequence[float]) -> ColumnElement[float]:
+        """Calculate the distance between the image embedding and a vector."""
         return custom_op("<#>", return_type=Float)(cls.image_embedding, vector) * -1
 
     @classmethod
     def watermarked_image_embedding_distance_to(cls, vector: Sequence[float]) -> ColumnElement[float]:
+        """Calculate the distance between the watermarked image embedding and a vector."""
         return custom_op("<#>", return_type=Float)(cls.watermarked_image_embedding, vector) * -1
 
     @classmethod
     def metadata_embedding_distance_to(cls, vector: Sequence[float]) -> ColumnElement[float]:
+        """Calculate the distance between the metadata embedding and a vector."""
         return custom_op("<#>", return_type=Float)(cls.metadata_embedding, vector) * -1
 
     @classmethod
     def user_caption_embedding_distance_to(cls, vector: Sequence[float]) -> ColumnElement[float]:
+        """Calculate the distance between the user caption embedding and a vector."""
         return custom_op("<#>", return_type=Float)(cls.user_caption_embedding, vector) * -1
 
     @classmethod
     def generated_caption_embedding_distance_to(cls, vector: Sequence[float]) -> ColumnElement[float]:
+        """Calculate the distance between the generated caption embedding and a vector."""
         return custom_op("<#>", return_type=Float)(cls.generated_caption_embedding, vector) * -1
