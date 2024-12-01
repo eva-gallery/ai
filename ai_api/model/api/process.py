@@ -40,3 +40,10 @@ class BackendPatchRequest(IODescriptor):
     modified_image_uuid: uuid.UUID | None = Field(default=None, description="Modified image UUID", serialization_alias="newUuid")
     ai_generated_status: AIGeneratedStatus = Field(default=None, description="AI generated status", serialization_alias="aiGenerated")
     metadata: dict[str, Any] | None = Field(default=None, description="Metadata", serialization_alias="artworkMetadata")
+
+
+class AddWatermarkRequest(IODescriptor):
+    """Request model for adding a watermark to an image."""
+
+    image: PILImage.Image
+    watermark_text: str

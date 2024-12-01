@@ -13,5 +13,12 @@
         "reportUnknownLambdaType": "none",
         "reportUnknownArgumentType": "none",
         "reportMissingTypeStubs": "none"
-    }
+    },
+    "ruff.exclude": [
+        ".venv",
+        ".pytest_cache",
+        ".github",
+        "alembic",
+        "tests"
+    ]
 }

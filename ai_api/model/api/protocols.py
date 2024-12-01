@@ -1,4 +1,4 @@
-"""Protocol defining the interface for the API service."""
+"""Protocol definitions for API services."""
 
 from __future__ import annotations
 
@@ -12,10 +12,8 @@ if TYPE_CHECKING:
     from bentoml import Context
     from PIL import Image as PILImage
 
-    from ai_api.services.inference_service import AddWatermarkRequest
-
     from .image_search import ImageSearchResponse
-    from .process import AIGeneratedStatus
+    from .process import AddWatermarkRequest, AIGeneratedStatus
     from .query_search import SearchResponse
 
 

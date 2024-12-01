@@ -6,12 +6,11 @@ captioning, AI generation detection, watermark detection, and watermark addition
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import Any, cast
 
 import bentoml
 import numpy as np
 import torch
-from bentoml import IODescriptor
 from diffusers.models.autoencoders.autoencoder_kl import AutoencoderKL
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2img import StableDiffusionXLImg2ImgPipeline
 from imwatermark import WatermarkDecoder, WatermarkEncoder
@@ -21,16 +20,9 @@ from torch.cuda import is_available
 from transformers import AutoModelForImageClassification, BlipForConditionalGeneration, BlipImageProcessor, BlipProcessor, pipeline
 
 from ai_api import settings
-from ai_api.model.api.process import AIGeneratedStatus
-from ai_api.model.api.service import InferenceServiceProto
+from ai_api.model.api.process import AddWatermarkRequest, AIGeneratedStatus
+from ai_api.model.api.protocols import InferenceServiceProto
 from ai_api.util.logger import get_logger
-
-
-class AddWatermarkRequest(IODescriptor):
-    """Request model for adding a watermark to an image."""
-
-    image: PILImage.Image
-    watermark_text: str
 
 
 @bentoml.service(

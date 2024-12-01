@@ -2,14 +2,15 @@
 
 from .embed import EmbedRequest, EmbedResponse
 from .image_search import ImageSearchRequest, ImageSearchResponse, RawImageSearchRequest
-from .process import AIGeneratedStatus, BackendPatchRequest, ProcessImageRequest
+from .process import AddWatermarkRequest, AIGeneratedStatus, BackendPatchRequest, ProcessImageRequest
+from .protocols import APIServiceProto, InferenceServiceProto
 from .query_search import SearchRequest, SearchResponse
-from .service import APIServiceProto, InferenceServiceProto
 from .status import ImageDuplicateStatus
 
 __all__ = [
     "AIGeneratedStatus",
     "APIServiceProto",
+    "AddWatermarkRequest",
     "BackendPatchRequest",
     "EmbedRequest",
     "EmbedResponse",

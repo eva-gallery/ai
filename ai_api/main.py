@@ -13,25 +13,27 @@ import aiohttp
 import bentoml
 import jwt
 import numpy as np
-from jwt.exceptions import JWTException
+from jwt.exceptions import InvalidTokenError
 from sqlalchemy import select
 
 from . import settings
 from .database import AIOPostgres
 from .model import (
+    AddWatermarkRequest,
     AIGeneratedStatus,
+    APIServiceProto,
     BackendPatchRequest,
     ImageDuplicateStatus,
     ImageSearchRequest,
     ImageSearchResponse,
+    InferenceServiceProto,
     ProcessImageRequest,
     RawImageSearchRequest,
     SearchRequest,
     SearchResponse,
 )
-from .model.api import APIServiceProto
 from .orm import GalleryEmbedding, Image
-from .services import AddWatermarkRequest, InferenceService, InferenceServiceProto
+from .services import InferenceService
 from .util import get_logger
 
 if TYPE_CHECKING:
@@ -82,7 +84,7 @@ class APIService(APIServiceProto):
         token = auth_header.split(" ")[1]
         try:
             jwt.decode(token, self.jwt_secret, algorithms=["HS256"])
-        except JWTException as e:
+        except InvalidTokenError as e:
             ctx.response.status_code = 401
             msg = f"Invalid JWT token: {e!s}"
             raise ValueError(msg) from e
@@ -118,7 +120,7 @@ class APIService(APIServiceProto):
         """Save image data to the database and send to the backend."""
         # Prepare headers with JWT token
         headers = {
-            "Authorization": f"Bearer {jwt.encode({'sub': 'ai-service'}, self.jwt_secret, algorithm='HS256')}"
+            "Authorization": f"Bearer {jwt.encode({'sub': 'ai-service'}, self.jwt_secret, algorithm='HS256')}",
         }
 
         if duplicate_status is not ImageDuplicateStatus.OK:
