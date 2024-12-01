@@ -22,12 +22,8 @@ from transformers import AutoModelForImageClassification, BlipForConditionalGene
 
 from ai_api import settings
 from ai_api.model.api.process import AIGeneratedStatus
+from ai_api.model.api.service import InferenceServiceProto
 from ai_api.util.logger import get_logger
-
-if TYPE_CHECKING:
-    from collections.abc import Coroutine
-
-    from _bentoml_sdk.method import APIMethod
 
 
 class AddWatermarkRequest(IODescriptor):
@@ -36,43 +32,6 @@ class AddWatermarkRequest(IODescriptor):
     image: PILImage.Image
     watermark_text: str
 
-
-class InferenceServiceProto(Protocol):
-    """Protocol defining the interface for the inference service."""
-
-    readyz: APIMethod[[], Coroutine[Any, Any, dict[str, str]]]
-    embed_text: APIMethod[
-        [list[str]],
-        Coroutine[Any, Any, list[list[float]]],
-    ]
-    embed_image: APIMethod[
-        [list[PILImage.Image]],
-        Coroutine[Any, Any, list[list[float]]],
-    ]
-    generate_caption: APIMethod[
-        [list[PILImage.Image]],
-        Coroutine[Any, Any, list[str]],
-    ]
-    detect_ai_generation: APIMethod[
-        [list[PILImage.Image]],
-        Coroutine[Any, Any, list[AIGeneratedStatus]],
-    ]
-    check_watermark: APIMethod[
-        [list[PILImage.Image]],
-        Coroutine[Any, Any, list[tuple[bool, str | None]]],
-    ]
-    check_ai_watermark: APIMethod[
-        [list[PILImage.Image]],
-        Coroutine[Any, Any, list[bool]],
-    ]
-    add_watermark: APIMethod[
-        [list[AddWatermarkRequest]],
-        Coroutine[Any, Any, list[PILImage.Image]],
-    ]
-    add_ai_watermark: APIMethod[
-        [list[PILImage.Image]],
-        Coroutine[Any, Any, list[PILImage.Image]],
-    ]
 
 @bentoml.service(
     name="evagellery_ai_inference",
@@ -179,13 +138,17 @@ class InferenceService(InferenceServiceProto):
     )
     async def detect_ai_generation(self, images: list[PILImage.Image]) -> list[AIGeneratedStatus]:
         """Detect if a list of images are AI-generated."""
-        model_results: list[dict[str, Any]] = cast(list[dict[str, Any]], self.model_ai_detection(images))
+        raw_results: list[list[dict[str, Any]]] = cast(list[list[dict[str, Any]]], self.model_ai_detection(images))
+        fake_scores = [
+            next(pred["score"] for pred in result if pred["label"] == "fake")
+            for result in raw_results
+        ]
 
-        if not model_results:
+        if not fake_scores:
             self.logger.error("No AI generation detection results due to some failure")
             return [AIGeneratedStatus.NOT_GENERATED] * len(images)
 
-        results = [AIGeneratedStatus.GENERATED if result and result["score"] > settings.model.detection.threshold else AIGeneratedStatus.NOT_GENERATED for result in model_results]
+        results = [AIGeneratedStatus.GENERATED if result > settings.model.detection.threshold else AIGeneratedStatus.NOT_GENERATED for result in fake_scores]
         self.logger.debug("AI generation detection results: {results}", results=results)
         return results
 

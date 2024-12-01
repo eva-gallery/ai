@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from bentoml import Field, IODescriptor
 
 
@@ -16,4 +18,4 @@ class SearchRequest(IODescriptor):
 class SearchResponse(IODescriptor):
     """The response to search for images."""
 
-    image_id: list[int] = Field(..., description="Image IDs of the most similar images")
+    image_uuid: list[uuid.UUID] = Field(..., description="UUIDs of the most similar images")

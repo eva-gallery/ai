@@ -12,8 +12,6 @@ from typing import TYPE_CHECKING, Any, cast
 import aiohttp
 import bentoml
 import numpy as np
-from bentoml.io import JSON, File, Multipart
-from PIL import Image as PILImage
 from sqlalchemy import select
 
 from . import settings
@@ -29,19 +27,37 @@ from .model import (
     SearchRequest,
     SearchResponse,
 )
+from .model.api import APIServiceProto
 from .orm import GalleryEmbedding, Image
 from .services import AddWatermarkRequest, InferenceService, InferenceServiceProto
 from .util import get_logger
 
 if TYPE_CHECKING:
-    from uuid import UUID
+    import uuid
+
+    from PIL import Image as PILImage
+
+
+@lru_cache(maxsize=4096)
+async def _get_and_cache_query_embeddings(query: str, embedding_service: InferenceServiceProto) -> tuple[float, ...]:
+    return tuple((await embedding_service.embed_text([query]))[0])
+
+
+@lru_cache(maxsize=4096)
+async def _search_image_id_cache(image_id: int) -> tuple[float] | None:
+    async with AIOPostgres() as conn:
+        # First get the embedding for the input image_id
+        embedding_stmt = select(GalleryEmbedding).where(GalleryEmbedding.image_id == image_id)
+        embedding_result = await conn.execute(embedding_stmt)
+        embedding = await embedding_result.scalar_one_or_none()  # type: ignore[misc]
+        return tuple(embedding.image_embedding) if embedding else None
 
 
 @bentoml.service(
     name="evagallery_ai_api",
     **settings.bentoml.service.api.to_dict(),
 )
-class APIService:
+class APIService(APIServiceProto):
     """API service for the AI API."""
 
     def __init__(self) -> None:
@@ -79,7 +95,7 @@ class APIService:
         duplicate_status: ImageDuplicateStatus,
         image_model: Image,
         gallery_embedding_model: GalleryEmbedding,
-        most_similar_image_uuid: UUID | None = None,
+        most_similar_image_uuid: uuid.UUID | None = None,
     ) -> None:
         """Save image data to the database and send to the backend."""
         if duplicate_status is not ImageDuplicateStatus.OK:
@@ -89,7 +105,7 @@ class APIService:
                 image_duplicate_status=duplicate_status,
                 modified_image_uuid=None,
                 ai_generated_status=image_model.generated_status,
-                metadata=None,
+                metadata=image_model.image_metadata,
             )
 
             data = aiohttp.FormData()
@@ -267,20 +283,15 @@ class APIService:
             ),
         )
 
-    @lru_cache(maxsize=4096)
-    @staticmethod
-    async def _get_and_cache_query_embeddings(query: str, embedding_service: InferenceServiceProto) -> tuple[float, ...]:
-        return tuple((await embedding_service.embed_text([query]))[0])
-
     @bentoml.api(
         route="/image/search_query",
         input_spec=SearchRequest,  # type: ignore[misc]
         output_spec=SearchResponse,  # type: ignore[misc]
     )
-    async def search_query(self, query_request: SearchRequest) -> SearchResponse:
+    async def search_query(self, query: str, count: int = 50, page: int = 0) -> SearchResponse:
         """Search for images by query."""
-        embedded_text: tuple[float, ...] = await self._get_and_cache_query_embeddings(
-            query_request.query,
+        embedded_text: tuple[float, ...] = await _get_and_cache_query_embeddings(
+            query,
             self.embedding_service,
         )
 
@@ -288,35 +299,25 @@ class APIService:
             stmt = (
                 select(GalleryEmbedding.image_id)
                 .order_by(GalleryEmbedding.image_embedding_distance_to(embedded_text))
-                .limit(query_request.count)
-                .offset(query_request.page * query_request.count)
+                .limit(count)
+                .offset(page * count)
             )
 
             result = await conn.execute(stmt)
             results = await (await result.scalars()).all()  # type: ignore[misc]
 
-        return SearchResponse(image_id=list(results))
-
-    @lru_cache(maxsize=4096)
-    @staticmethod
-    async def _search_image_id_cache(image_id: int) -> tuple[float] | None:
-        async with AIOPostgres() as conn:
-            # First get the embedding for the input image_id
-            embedding_stmt = select(GalleryEmbedding).where(GalleryEmbedding.image_id == image_id)
-            embedding_result = await conn.execute(embedding_stmt)
-            embedding = await embedding_result.scalar_one_or_none()  # type: ignore[misc]
-            return tuple(embedding.image_embedding) if embedding else None
+        return SearchResponse(image_uuid=list(results))
 
     @bentoml.api(
         route="/image/search_image",
         input_spec=ImageSearchRequest,  # type: ignore[misc]
         output_spec=ImageSearchResponse,  # type: ignore[misc]
     )
-    async def search_image(self, search_request: ImageSearchRequest) -> ImageSearchResponse:
+    async def search_image(self, image_uuid: uuid.UUID, count: int = 50, page: int = 0) -> ImageSearchResponse:
         """Search for images by image UUID."""
         async with AIOPostgres() as conn:
             # First get the image ID from the UUID
-            image_id_stmt = select(Image.id).where(Image.image_uuid == search_request.image_uuid)
+            image_id_stmt = select(Image.id).where(Image.image_uuid == image_uuid)
             image_id_result = await conn.execute(image_id_stmt)
             image_id = await image_id_result.scalar_one_or_none()  # type: ignore[misc]
 
@@ -325,7 +326,7 @@ class APIService:
                 return ImageSearchResponse(image_uuid=[])
 
             # Get the embedding for this image ID
-            embedding = await self._search_image_id_cache(image_id)
+            embedding = await _search_image_id_cache(image_id)
             if embedding is None:
                 self.ctx.response.status_code = 404
                 return ImageSearchResponse(image_uuid=[])
@@ -336,8 +337,8 @@ class APIService:
                 .join(GalleryEmbedding, GalleryEmbedding.image_id == Image.id)
                 .where(Image.id != image_id)
                 .order_by(GalleryEmbedding.image_embedding_distance_to(embedding))
-                .limit(search_request.count)
-                .offset(search_request.page * search_request.count)
+                .limit(count)
+                .offset(page * count)
             )
 
             result = await conn.execute(stmt)
