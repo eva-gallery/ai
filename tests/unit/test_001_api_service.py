@@ -72,13 +72,24 @@ async def api_service(
     mock_db_session: AsyncMock,
     mock_aiohttp_session: AsyncMock,
 ) -> AsyncGenerator[APIServiceProto, None]:
-    with patch("ai_api.main.bentoml.depends", return_value=mock_embedding_service), \
-         patch("ai_api.main.AIOPostgres") as mock_postgres, \
-         patch("ai_api.main.aiohttp.ClientSession", return_value=mock_aiohttp_session):
+    # Create a patched version of APIService
+    with patch("ai_api.main.APIService") as MockAPIService:
+        # Create a mock for _verify_jwt
+        mock_verify_jwt = MagicMock(return_value=None)
 
-        mock_postgres.return_value.session.return_value = mock_db_session
-        service = APIService()
-        yield service
+        # Set up the mock class to include our mock method
+        MockAPIService._verify_jwt = mock_verify_jwt  # noqa: SLF001
+        MockAPIService.return_value = APIService()
+
+        with patch("ai_api.main.bentoml.depends", return_value=mock_embedding_service), \
+             patch("ai_api.main.AIOPostgres") as mock_postgres, \
+             patch("ai_api.main.aiohttp.ClientSession", return_value=mock_aiohttp_session):
+
+            mock_postgres.return_value.session.return_value = mock_db_session
+            service = APIService()
+            # Add the mock method to the instance
+            service._verify_jwt = mock_verify_jwt  # type: ignore[attr-defined] # noqa: SLF001
+            yield service
 
 
 @pytest.mark.asyncio

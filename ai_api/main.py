@@ -11,7 +11,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import aiohttp
 import bentoml
+import jwt
 import numpy as np
+from jwt.exceptions import JWTException
 from sqlalchemy import select
 
 from . import settings
@@ -67,7 +69,23 @@ class APIService(APIServiceProto):
         self.ctx = bentoml.Context()
         self.db_healthy = False
         self.background_tasks: set[asyncio.Task[Any]] = set()
+        self.jwt_secret = settings.jwt_secret
         asyncio.run_coroutine_threadsafe(self._init_postgres(), asyncio.get_event_loop())
+
+    def _verify_jwt(self, ctx: bentoml.Context) -> None:
+        """Verify JWT token from Authorization header."""
+        auth_header = ctx.request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            ctx.response.status_code = 401
+            raise ValueError
+
+        token = auth_header.split(" ")[1]
+        try:
+            jwt.decode(token, self.jwt_secret, algorithms=["HS256"])
+        except JWTException as e:
+            ctx.response.status_code = 401
+            msg = f"Invalid JWT token: {e!s}"
+            raise ValueError(msg) from e
 
     async def _init_postgres(self) -> None:
         """Initialize the Postgres client."""
@@ -98,6 +116,11 @@ class APIService(APIServiceProto):
         most_similar_image_uuid: uuid.UUID | None = None,
     ) -> None:
         """Save image data to the database and send to the backend."""
+        # Prepare headers with JWT token
+        headers = {
+            "Authorization": f"Bearer {jwt.encode({'sub': 'ai-service'}, self.jwt_secret, algorithm='HS256')}"
+        }
+
         if duplicate_status is not ImageDuplicateStatus.OK:
             patch_request = BackendPatchRequest(
                 image_uuid=image_model.image_uuid,
@@ -114,6 +137,7 @@ class APIService(APIServiceProto):
             async with aiohttp.ClientSession() as session, session.patch(
                 settings.eva_backend.backend_image_patch_route,
                 data=data,
+                headers=headers,
             ) as response:
                 if response.status not in (200, 201):
                     self.logger.error("Failed to patch backend: {response}", response=await response.text())
@@ -151,6 +175,7 @@ class APIService(APIServiceProto):
         async with aiohttp.ClientSession() as session, session.patch(
             settings.eva_backend.backend_image_patch_route,
             data=data,
+            headers=headers,
         ) as response:
             if response.status not in (200, 201):
                 self.logger.error("Failed to patch backend: {response}", response=await response.text())
@@ -288,8 +313,9 @@ class APIService(APIServiceProto):
         input_spec=SearchRequest,  # type: ignore[misc]
         output_spec=SearchResponse,  # type: ignore[misc]
     )
-    async def search_query(self, query: str, count: int = 50, page: int = 0) -> SearchResponse:
+    async def search_query(self, query: str, count: int = 50, page: int = 0, ctx: bentoml.Context | None = None) -> SearchResponse:
         """Search for images by query."""
+        self._verify_jwt(ctx)  # type: ignore[arg-type]
         embedded_text: tuple[float, ...] = await _get_and_cache_query_embeddings(
             query,
             self.embedding_service,
@@ -313,8 +339,9 @@ class APIService(APIServiceProto):
         input_spec=ImageSearchRequest,  # type: ignore[misc]
         output_spec=ImageSearchResponse,  # type: ignore[misc]
     )
-    async def search_image(self, image_uuid: uuid.UUID, count: int = 50, page: int = 0) -> ImageSearchResponse:
+    async def search_image(self, image_uuid: uuid.UUID, count: int = 50, page: int = 0, ctx: bentoml.Context | None = None) -> ImageSearchResponse:
         """Search for images by image UUID."""
+        self._verify_jwt(ctx)  # type: ignore[arg-type]
         async with AIOPostgres() as conn:
             # First get the image ID from the UUID
             image_id_stmt = select(Image.id).where(Image.image_uuid == image_uuid)
@@ -357,6 +384,7 @@ class APIService(APIServiceProto):
         ctx: bentoml.Context,
     ) -> ImageSearchResponse:
         """Search for images by raw image bytes."""
+        self._verify_jwt(ctx)
         if ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
             ctx.response.status_code = 503
             return ImageSearchResponse(image_uuid=[])  # type: ignore[misc]
@@ -394,6 +422,7 @@ class APIService(APIServiceProto):
         ctx: bentoml.Context,
     ) -> None:
         """Process an image."""
+        self._verify_jwt(ctx)
         if ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
             ctx.response.status_code = 503
             return

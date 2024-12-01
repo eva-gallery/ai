@@ -1,4 +1,5 @@
 default:
+  jwt_secret: "secret"
   test: 0
   model:
     cache_dir: "/tmp/cache"
