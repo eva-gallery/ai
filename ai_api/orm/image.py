@@ -9,7 +9,7 @@ from sqlalchemy import UUID, Enum, Index, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from ..model.api import AIGeneratedStatus  # noqa: TID252
+from ai_api.model.api import AIGeneratedStatus
 from .base import Base
 
 if TYPE_CHECKING:

@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 import uuid
 
 from bentoml import Field, IODescriptor
+from PIL import Image as PILImage
 
 from ai_api.model.api.status import ImageDuplicateStatus
-
-if TYPE_CHECKING:
-    from PIL import Image as PILImage
 
 
 class AIGeneratedStatus(Enum):

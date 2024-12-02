@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from bentoml import Field, IODescriptor
-
-if TYPE_CHECKING:
-    from PIL import Image as PILImage
+from PIL import Image as PILImage
 
 
 class EmbedRequest(IODescriptor):
