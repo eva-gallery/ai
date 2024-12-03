@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    import uuid
     from collections.abc import Coroutine
 
     from _bentoml_sdk.method import APIMethod
@@ -78,7 +77,7 @@ class APIServiceProto(Protocol):
     ]
 
     search_image: APIMethod[
-        [uuid.UUID, int, int],
+        [str, int, int],
         Coroutine[Any, Any, ImageSearchResponse],
     ]
 

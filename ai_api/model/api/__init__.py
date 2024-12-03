@@ -1,6 +1,5 @@
 """The module with Pydantic models for the API."""
 
-from .embed import EmbedRequest, EmbedResponse
 from .image_search import ImageSearchRequest, ImageSearchResponse, RawImageSearchRequest
 from .process import AddWatermarkRequest, AIGeneratedStatus, BackendPatchRequest, ProcessImageRequest
 from .protocols import APIServiceProto, InferenceServiceProto
@@ -12,8 +11,6 @@ __all__ = [
     "APIServiceProto",
     "AddWatermarkRequest",
     "BackendPatchRequest",
-    "EmbedRequest",
-    "EmbedResponse",
     "ImageDuplicateStatus",
     "ImageSearchRequest",
     "ImageSearchResponse",

@@ -6,14 +6,16 @@ import asyncio
 import hashlib
 import io
 import os
+import uuid
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import aiohttp
 import bentoml
 import jwt
 import numpy as np
 from jwt.exceptions import InvalidTokenError
+from PIL.Image import Image as PILImage
 from sqlalchemy import select
 
 from . import settings
@@ -24,22 +26,14 @@ from .model import (
     APIServiceProto,
     BackendPatchRequest,
     ImageDuplicateStatus,
-    ImageSearchRequest,
     ImageSearchResponse,
     InferenceServiceProto,
-    ProcessImageRequest,
     RawImageSearchRequest,
-    SearchRequest,
     SearchResponse,
 )
 from .orm import GalleryEmbedding, Image
 from .services import InferenceService
 from .util import get_logger
-
-if TYPE_CHECKING:
-    import uuid
-
-    from PIL import Image as PILImage
 
 
 @lru_cache(maxsize=4096)
@@ -111,7 +105,7 @@ class APIService(APIServiceProto):
 
     async def _save_and_notify(
         self,
-        image_pil: PILImage.Image,
+        image_pil: PILImage,
         duplicate_status: ImageDuplicateStatus,
         image_model: Image,
         gallery_embedding_model: GalleryEmbedding,
@@ -184,7 +178,7 @@ class APIService(APIServiceProto):
 
     async def _process_image_data(
         self,
-        image_pil: PILImage.Image,
+        image_pil: PILImage,
         artwork_uuid: str,
         ai_generated_status: AIGeneratedStatus,
         metadata: dict[str, Any],
@@ -272,7 +266,7 @@ class APIService(APIServiceProto):
             if ai_generated_status == AIGeneratedStatus.NOT_GENERATED:
                 watermarked_image_pil = (await self.embedding_service.add_ai_watermark([image_pil]))[0]
 
-        watermarked_image_pil: PILImage.Image = (await self.embedding_service.add_watermark([
+        watermarked_image_pil: PILImage = (await self.embedding_service.add_watermark([
             AddWatermarkRequest(image=watermarked_image_pil, watermark_text=original_hash),
         ]))[0]
         watermarked_image_embed, generated_caption_embed = await asyncio.gather(
@@ -312,8 +306,6 @@ class APIService(APIServiceProto):
 
     @bentoml.api(
         route="/image/search_query",
-        input_spec=SearchRequest,  # type: ignore[misc]
-        output_spec=SearchResponse,  # type: ignore[misc]
     )
     async def search_query(self, query: str, count: int = 50, page: int = 0, ctx: bentoml.Context | None = None) -> SearchResponse:
         """Search for images by query."""
@@ -338,12 +330,11 @@ class APIService(APIServiceProto):
 
     @bentoml.api(
         route="/image/search_image",
-        input_spec=ImageSearchRequest,  # type: ignore[misc]
-        output_spec=ImageSearchResponse,  # type: ignore[misc]
     )
-    async def search_image(self, image_uuid: uuid.UUID, count: int = 50, page: int = 0, ctx: bentoml.Context | None = None) -> ImageSearchResponse:
+    async def search_image(self, image_uuid: str, count: int = 50, page: int = 0, ctx: bentoml.Context | None = None) -> ImageSearchResponse:  # type: ignore[misc]
         """Search for images by image UUID."""
         self._verify_jwt(ctx)  # type: ignore[arg-type]
+        image_uuid: uuid.UUID = uuid.UUID(image_uuid)  # type: ignore[arg-type]
         async with AIOPostgres() as conn:
             # First get the image ID from the UUID
             image_id_stmt = select(Image.id).where(Image.image_uuid == image_uuid)
@@ -377,11 +368,10 @@ class APIService(APIServiceProto):
 
     @bentoml.api(
         route="/image/search_image_raw",
-        output_spec=ImageSearchResponse,  # type: ignore[misc]
     )
     async def search_image_raw(
         self,
-        image: PILImage.Image,
+        image: PILImage,
         request: RawImageSearchRequest,
         ctx: bentoml.Context,
     ) -> ImageSearchResponse:
@@ -413,11 +403,10 @@ class APIService(APIServiceProto):
 
     @bentoml.api(
         route="/image/process",
-        input_spec=ProcessImageRequest,
     )
     async def process_image(
         self,
-        image: PILImage.Image,
+        image: PILImage,
         image_uuid: str,
         ai_generated_status: str,
         metadata: dict[str, Any],
