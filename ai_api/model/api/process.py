@@ -39,7 +39,7 @@ class BackendPatchRequest(IODescriptor):
     image_duplicate_status: ImageDuplicateStatus = Field(default=ImageDuplicateStatus.OK, description="Image duplicate status", serialization_alias="duplicateStatus")
     closest_match_uuid: UUID4 | None = Field(default=None, description="Closest image match UUID if duplicate or plagiarised", serialization_alias="closestMatchUuid")
     modified_image_uuid: UUID4 | None = Field(default=None, description="Modified image UUID", serialization_alias="newUuid")
-    ai_generated_status: AIGeneratedStatus = Field(default=None, description="AI generated status", serialization_alias="aiGenerated")
+    ai_generated_status: AIGeneratedStatus | None = Field(default=None, description="AI generated status", serialization_alias="aiGenerated")
     metadata: dict[str, Any] | None = Field(default=None, description="Metadata", serialization_alias="artworkMetadata")
 
 
@@ -52,3 +52,11 @@ class AddWatermarkRequest(IODescriptor):
     class Config:
         arbitrary_types_allowed = True
 
+
+class ListAddWatermarkRequest(IODescriptor):
+    """Request model for adding a watermark to a list of images."""
+
+    images: list[AddWatermarkRequest]
+
+    class Config:
+        arbitrary_types_allowed = True

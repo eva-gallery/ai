@@ -154,7 +154,7 @@ async def test_search_image(api_service: APIServiceProto, mock_db_session: Async
         # Mock the cache function to return a valid embedding
         with patch("ai_api.main._search_image_id_cache", new=AsyncMock(return_value=(0.1, 0.2, 0.3))):
             test_uuid = uuid.uuid4()
-            result = await api_service.search_image(test_uuid, 10, 0)
+            result = await api_service.search_image(str(test_uuid), 10, 0)
 
             assert isinstance(result.image_uuid, list)
             assert len(result.image_uuid) == 3
