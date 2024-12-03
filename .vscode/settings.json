@@ -2,5 +2,23 @@
     "python.analysis.typeCheckingMode": "strict",
     "github-actions.workflows.pinned.workflows": [
         ".github/workflows/pipeline.yaml"
+    ],
+    "python.analysis.include": [
+        "ai_api"
+    ],
+    "python.analysis.diagnosticMode": "workspace",
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportUnknownMemberType": "none",
+        "reportUnknownVariableType": "none",
+        "reportUnknownLambdaType": "none",
+        "reportUnknownArgumentType": "none",
+        "reportMissingTypeStubs": "none"
+    },
+    "ruff.exclude": [
+        ".venv",
+        ".pytest_cache",
+        ".github",
+        "alembic",
+        "tests"
     ]
 }

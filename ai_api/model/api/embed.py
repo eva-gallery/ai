@@ -1,11 +1,11 @@
-from pydantic import BaseModel, Field
+from bentoml import Field, IODescriptor
+from PIL.Image import Image as PILImage
 
 
-class EmbedRequest(BaseModel):
-    image: list[bytes] = Field(..., description="List of images to embed")
-    caption: list[str] = Field(..., description="List of captions for the images")
-    metadata: list[dict] = Field(..., description="List of metadata for the images")
+class EmbedRequest(IODescriptor):
+    """The request to embed images."""
 
+    image: list[PILImage] = Field(..., description="List of images to embed")
 
-class EmbedResponse(BaseModel):
-    image_id: list[int] = Field(..., description="List of image IDs")
+    class Config:
+        arbitrary_types_allowed = True

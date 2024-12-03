@@ -1,3 +1,5 @@
-from .inference_service import InferenceService
+"""The module with BentoML services."""
 
-__all__ = ["InferenceService"]
+from .inference_service import AddWatermarkRequest, InferenceService
+
+__all__ = ["AddWatermarkRequest", "InferenceService"]

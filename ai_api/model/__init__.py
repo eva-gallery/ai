@@ -1,23 +1,31 @@
+"""The module with Pydantic models for the API's requests and responses."""
+
 from .api import (
-    ImageDuplicateStatus, 
-    BackendPatchRequest, 
-    AIGeneratedStatus, 
-    ProcessImageRequest, 
-    SearchRequest, 
-    SearchResponse, 
-    ImageSearchRequest, 
-    ImageSearchResponse, 
-    RawImageSearchRequest
+    AddWatermarkRequest,
+    AIGeneratedStatus,
+    APIServiceProto,
+    BackendPatchRequest,
+    ImageDuplicateStatus,
+    ImageSearchRequest,
+    ImageSearchResponse,
+    InferenceServiceProto,
+    ProcessImageRequest,
+    RawImageSearchRequest,
+    SearchRequest,
+    SearchResponse,
 )
 
 __all__ = [
-    "ImageDuplicateStatus", 
-    "BackendPatchRequest", 
-    "AIGeneratedStatus", 
-    "ProcessImageRequest", 
-    "SearchRequest", 
-    "SearchResponse", 
-    "ImageSearchRequest", 
-    "ImageSearchResponse", 
-    "RawImageSearchRequest"
+    "AIGeneratedStatus",
+    "APIServiceProto",
+    "AddWatermarkRequest",
+    "BackendPatchRequest",
+    "ImageDuplicateStatus",
+    "ImageSearchRequest",
+    "ImageSearchResponse",
+    "InferenceServiceProto",
+    "ProcessImageRequest",
+    "RawImageSearchRequest",
+    "SearchRequest",
+    "SearchResponse",
 ]

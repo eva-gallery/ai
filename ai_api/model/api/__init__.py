@@ -1,16 +1,24 @@
-from .status import ImageDuplicateStatus
-from .process import BackendPatchRequest, AIGeneratedStatus, ProcessImageRequest
-from .query_search import SearchRequest, SearchResponse
+"""The module with Pydantic models for the API."""
+
+from .embed import EmbedRequest
 from .image_search import ImageSearchRequest, ImageSearchResponse, RawImageSearchRequest
+from .process import AddWatermarkRequest, AIGeneratedStatus, BackendPatchRequest, ProcessImageRequest
+from .protocols import APIServiceProto, InferenceServiceProto
+from .query_search import SearchRequest, SearchResponse
+from .status import ImageDuplicateStatus
 
 __all__ = [
-    "ImageDuplicateStatus", 
-    "BackendPatchRequest", 
-    "AIGeneratedStatus", 
-    "ProcessImageRequest", 
-    "SearchRequest", 
-    "SearchResponse", 
-    "ImageSearchRequest", 
+    "AIGeneratedStatus",
+    "APIServiceProto",
+    "AddWatermarkRequest",
+    "BackendPatchRequest",
+    "EmbedRequest",
+    "ImageDuplicateStatus",
+    "ImageSearchRequest",
     "ImageSearchResponse",
-    "RawImageSearchRequest"
+    "InferenceServiceProto",
+    "ProcessImageRequest",
+    "RawImageSearchRequest",
+    "SearchRequest",
+    "SearchResponse",
 ]

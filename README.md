@@ -29,7 +29,8 @@ See `settings.yaml` for the full configuration structure. Environment variables 
 
 Ensure that the `ENV_FOR_DYNACONF` environment variable is set to the appropriate environment, out of `[development, production, testing]` so that the correct fallback configuration is used.
 
-Recommended list of environment variables / categories to set:
+Recommended/required list of environment variables / categories to set:
+- `EVA_AI_JWT_SECRET`
 - `EVA_AI_POSTGRES__*`
 - `EVA_AI_EVA_BACKEND__*`
 - `EVA_AI_MODEL__CACHE_DIR`
