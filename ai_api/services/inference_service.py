@@ -1,7 +1,11 @@
 """The BentoML inference service for the AI API.
 
-The BentoML service for the inference API which handles the image and text embeddings,
-captioning, AI generation detection, watermark detection, and watermark addition.
+This module provides a BentoML service for handling various AI-related operations including:
+- Image and text embedding generation
+- Image captioning
+- AI generation detection
+- Watermark detection and addition
+- Image similarity search
 """
 
 from __future__ import annotations
@@ -32,10 +36,26 @@ from ai_api.util.logger import get_logger
     **settings.bentoml.service.embedding.to_dict(),
 )
 class InferenceService(InferenceServiceProto):
-    """Inference service for the AI API."""
+    """BentoML service for AI inference operations.
+    
+    This service handles various AI operations including embedding generation,
+    image captioning, AI detection, and watermark operations. It uses multiple
+    pre-trained models for different tasks.
+    
+    Attributes:
+        logger: Logger instance for service logging.
+        device: PyTorch device (CPU/GPU) for model execution.
+        model_img: SentenceTransformer model for image embedding.
+        model_text: SentenceTransformer model for text embedding.
+        caption_processor: BLIP processor for image captioning.
+        caption_model: BLIP model for image captioning.
+        model_ai_watermark: StableDiffusion model for AI watermarking.
+        model_ai_watermark_decoder: Model for detecting AI watermarks.
+        model_ai_detection: Pipeline for detecting AI-generated images.
+    """
 
     def __init__(self) -> None:
-        """Initialize the inference service."""
+        """Initialize the inference service with required models and processors."""
         self.logger = get_logger()
         self.device: torch.device = torch.device(f"cuda:{getattr(bentoml.server_context, 'worker_index', 1) - 1}" if is_available() else "cpu")
         self.device_map_string = "balanced"  # can't use 'cuda:0', bug in safetensors
@@ -83,7 +103,11 @@ class InferenceService(InferenceServiceProto):
 
     @bentoml.api(route="/readyz")
     async def readyz(self) -> dict[str, str]:
-        """Check if the service is ready."""
+        """Check if the service is ready to handle requests.
+        
+        :returns: Dictionary containing service status.
+        :rtype: dict[str, str]
+        """
         return {"status": "ready"}
 
     @bentoml.api(
@@ -93,7 +117,13 @@ class InferenceService(InferenceServiceProto):
         max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
     )
     async def embed_text(self, texts: list[str]) -> list[list[float]]:
-        """Embed a list of texts."""
+        """Generate embeddings for a list of text inputs.
+        
+        :param texts: List of text strings to embed.
+        :type texts: list[str]
+        :returns: List of normalized embedding vectors.
+        :rtype: list[list[float]]
+        """
         results = [result.tolist() for result in self.model_text.encode(texts, normalize_embeddings=True)]
         self.logger.debug("Text embedding results: {results}", results=results)
         return results
@@ -106,7 +136,13 @@ class InferenceService(InferenceServiceProto):
         input_spec=EmbedRequest,
     )
     async def embed_image(self, images: List[PILImage]) -> list[list[float]]:
-        """Embed a list of images."""
+        """Generate embeddings for a list of images.
+        
+        :param images: List of PIL images to embed.
+        :type images: List[PILImage]
+        :returns: List of normalized embedding vectors.
+        :rtype: list[list[float]]
+        """
         results = [result.tolist() for result in self.model_img.encode(images, normalize_embeddings=True)]  # type: ignore[arg-type]
         self.logger.debug("Image embedding results: {results}", results=results)
         return results
@@ -119,7 +155,13 @@ class InferenceService(InferenceServiceProto):
         input_spec=EmbedRequest,
     )
     async def generate_caption(self, images: List[PILImage]) -> list[str]:
-        """Generate captions for a list of images."""
+        """Generate descriptive captions for a list of images.
+        
+        :param images: List of PIL images to generate captions for.
+        :type images: List[PILImage]
+        :returns: List of generated caption strings.
+        :rtype: list[str]
+        """
         inputs = self.caption_processor(images, return_tensors="pt")
         out = self.caption_model.generate(**inputs, max_length=settings.model.captioning.max_length)  # type: ignore[arg-type]
         captions = self.caption_processor.decode(out[0], skip_special_tokens=True)
@@ -134,7 +176,14 @@ class InferenceService(InferenceServiceProto):
         input_spec=EmbedRequest,
     )
     async def detect_ai_generation(self, images: List[PILImage]) -> list[AIGeneratedStatus]:
-        """Detect if a list of images are AI-generated."""
+        """Detect whether images were generated by AI.
+        
+        :param images: List of PIL images to check.
+        :type images: List[PILImage]
+        :returns: List of AI generation status enums.
+        :rtype: list[AIGeneratedStatus]
+        :raises: May raise exceptions from the underlying AI detection model.
+        """
         raw_results: list[list[dict[str, Any]]] = cast(list[list[dict[str, Any]]], self.model_ai_detection(images))
         fake_scores = [
             next(pred["score"] for pred in result if pred["label"] == "fake")
@@ -157,7 +206,14 @@ class InferenceService(InferenceServiceProto):
         input_spec=EmbedRequest,
     )
     async def check_watermark(self, images: List[PILImage]) -> list[tuple[bool, str | None]]:
-        """Check if a list of images contain an AI watermark."""
+        """Check for the presence of watermarks in images.
+        
+        :param images: List of PIL images to check for watermarks.
+        :type images: List[PILImage]
+        :returns: List of tuples containing (has_watermark, watermark_text).
+        :rtype: list[tuple[bool, str | None]]
+        :raises: May raise exceptions during watermark decoding.
+        """
         gan_mark = WatermarkDecoder("bits", 32)
         results = []
         for image in images:
@@ -186,7 +242,13 @@ class InferenceService(InferenceServiceProto):
         input_spec=EmbedRequest,
     )
     async def check_ai_watermark(self, images: List[PILImage]) -> list[bool]:
-        """Check if a list of images contain an AI watermark."""
+        """Check for the presence of AI-specific watermarks in images.
+        
+        :param images: List of PIL images to check for AI watermarks.
+        :type images: List[PILImage]
+        :returns: List of boolean values indicating AI watermark presence.
+        :rtype: list[bool]
+        """
         ai_watermark_t = self.model_ai_watermark_processor(images, return_tensors="pt").to(self.model_ai_watermark_decoder.device)
         ai_watermark_pred = self.model_ai_watermark_decoder(**ai_watermark_t).logits[:, 0] < 0  # type: ignore[arg-type]
         pred_bool = ai_watermark_pred > (1 - settings.model.detection.threshold)
@@ -202,7 +264,13 @@ class InferenceService(InferenceServiceProto):
         output_spec=EmbedRequest,
     )
     async def add_watermark(self, request: List[AddWatermarkRequest]) -> list[PILImage]:
-        """Add a watermark to a list of images."""
+        """Add watermarks to a list of images.
+        
+        :param request: List of watermark requests containing images and watermark text.
+        :type request: List[AddWatermarkRequest]
+        :returns: List of watermarked PIL images.
+        :rtype: list[PILImage]
+        """
         wm = WatermarkEncoder()
         binaries = "".join(format(ord(c.watermark_text), "08b") for c in request)
         binaries = [binary[:32] if len(binary) > 32 else binary.ljust(32, "0") for binary in binaries]  # noqa: PLR2004
@@ -224,7 +292,13 @@ class InferenceService(InferenceServiceProto):
         output_spec=EmbedRequest,
     )
     async def add_ai_watermark(self, images: List[PILImage]) -> list[PILImage]:
-        """Add an AI watermark to a list of images."""
+        """Add AI-specific watermarks to a list of images.
+        
+        :param images: List of PIL images to add AI watermarks to.
+        :type images: List[PILImage]
+        :returns: List of watermarked PIL images.
+        :rtype: list[PILImage]
+        """
         results = list(self.model_ai_watermark(image=images)[0])  # type: ignore[arg-type]
         self.logger.debug("AI watermark results: {results}", results=results)
         return results

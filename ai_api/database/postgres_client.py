@@ -1,4 +1,10 @@
-"""The Postgres client for the AI API."""
+"""Module providing PostgreSQL database client implementations.
+
+This module provides both synchronous and asynchronous PostgreSQL client implementations
+with support for connection pooling, transaction management, and vector operations.
+The clients support both regular PostgreSQL operations and vector-specific extensions
+like vectorscale and pgvector for similarity search operations.
+"""
 
 from __future__ import annotations
 
@@ -24,16 +30,33 @@ if TYPE_CHECKING:
 
 
 class DatabaseBase:
-    """The base class for the Postgres client."""
+    """Base class for database client implementations.
+
+    This class provides common functionality for database initialization,
+    including vector extension setup for similarity search operations.
+
+    :param url: Database connection URL.
+    :type url: str
+    """
 
     def __init__(self, url: str = "sqlite://") -> None:
-        """Initialize the database base and initialize the extension."""
+        """Initialize the database base and initialize the extension.
+
+        :param url: Database connection URL.
+        :type url: str
+        """
         self.url = url
         self.logger = get_logger()
         self.init_extension()
 
     def init_extension(self) -> None:
-        """Initialize the extension. In CI this is skipped. Initializes vectorscale if possible, otherwise just pgvector."""
+        """Initialize database extensions for vector operations.
+
+        Attempts to initialize vectorscale first, falling back to pgvector.
+        This operation is skipped in CI environments.
+
+        :raises: May raise SQLAlchemy errors during extension initialization.
+        """
         if os.getenv("CI"):
             return
 
@@ -56,7 +79,13 @@ class DatabaseBase:
         conn.close()
 
     def init_diskann(self) -> None:
-        """Initialize either diskann if vectorscale is available, otherwise hnsw from pgvector if possible."""
+        """Initialize vector similarity search indices.
+
+        Attempts to initialize diskann index if vectorscale is available,
+        otherwise falls back to hnsw from pgvector.
+
+        :raises: May raise SQLAlchemy errors during index creation.
+        """
         engine = create_engine(self.url.replace("+asyncpg", ""))
         conn = engine.connect()
 
@@ -78,14 +107,25 @@ class DatabaseBase:
 
 
 class AIOPostgresBase(DatabaseBase, metaclass=Singleton):
-    """An async context manager for the postgres database."""
+    """Base class for asynchronous PostgreSQL client implementation.
+
+    This class provides asynchronous database operations with connection pooling
+    and transaction management using SQLAlchemy's async engine.
+
+    :param url: Database connection URL.
+    :type url: str
+    """
 
     _initialized = False
     _context_var: ContextVar[AsyncSessionType | None] = ContextVar("postgres_context", default=None)
     _transaction_var: ContextVar[AsyncSessionType | None] = ContextVar("postgres_transaction", default=None)
 
     def __init__(self, url: str = "sqlite+aiosqlite://") -> None:
-        """Initialize the async Postgres client."""
+        """Initialize the async PostgreSQL client with connection pooling.
+
+        :param url: Database connection URL.
+        :type url: str
+        """
         if not self._initialized:
             super().__init__(url)
             self.engine = create_async_engine(
@@ -105,7 +145,11 @@ class AIOPostgresBase(DatabaseBase, metaclass=Singleton):
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSessionType]:
-        """Get a session context."""
+        """Create an async session context.
+
+        :yields: Async database session.
+        :rtype: AsyncIterator[AsyncSessionType]
+        """
         async_session: AsyncSessionType = self._session()
         try:
             yield async_session
@@ -113,7 +157,11 @@ class AIOPostgresBase(DatabaseBase, metaclass=Singleton):
             await async_session.close()
 
     async def __aenter__(self) -> AsyncSessionType:
-        """Create a transactional context for the database."""
+        """Create an async transaction context.
+
+        :returns: Async session with transaction.
+        :rtype: AsyncSessionType
+        """
         async_context: AsyncSessionType = self._session()
         self._context_var.set(async_context)
 
@@ -122,7 +170,16 @@ class AIOPostgresBase(DatabaseBase, metaclass=Singleton):
         return transaction
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
-        """Exit a transactional context for the database."""
+        """Exit the async transaction context.
+
+        :param exc_type: Exception type if an error occurred.
+        :type exc_type: type[BaseException] | None
+        :param exc_val: Exception value if an error occurred.
+        :type exc_val: BaseException | None
+        :param exc_tb: Exception traceback if an error occurred.
+        :type exc_tb: TracebackType | None
+        :raises: Re-raises any SQLAlchemy errors after rollback.
+        """
         async_context = self._context_var.get()
         transaction = self._transaction_var.get()
 
@@ -143,25 +200,58 @@ class AIOPostgresBase(DatabaseBase, metaclass=Singleton):
 
 
 class AIOPostgres(AIOPostgresBase):
-    """The async version of the Postgres class which is mocked in CI."""
+    """Async PostgreSQL client with CI environment handling.
+
+    This class extends AIOPostgresBase with special handling for CI environments,
+    where database operations are mocked.
+
+    :param url: Database connection URL.
+    :type url: str
+    """
 
     def __init__(self, url: str = "sqlite+aiosqlite://") -> None:
-        """Initialize the async version of the Postgres class which is mocked in CI."""
+        """Initialize the async PostgreSQL client.
+
+        :param url: Database connection URL.
+        :type url: str
+        """
         if os.getenv("CI"):
             return
         super().__init__(url)
 
     def __getattr__(self, name: str) -> Callable[[Any], None | EllipsisType]:
-        """Get an attribute from the async Postgres class which is mocked in CI."""
+        """Get attribute with CI environment handling.
+
+        :param name: Attribute name.
+        :type name: str
+        :returns: Mock function in CI, actual attribute otherwise.
+        :rtype: Callable[[Any], None | EllipsisType]
+        """
         if os.getenv("CI"):
             return lambda *_, **__: ...
         return getattr(super(AIOPostgresBase, self), name)
 
+
 class PostgresBase(DatabaseBase):
-    """The synchronous version of the AIOPostgres class."""
+    """Base class for synchronous PostgreSQL client implementation.
+
+    This class provides synchronous database operations with transaction
+    management using SQLAlchemy's sync engine.
+
+    :param url: Database connection URL.
+    :type url: str
+    :param init_diskann: Whether to initialize vector similarity indices.
+    :type init_diskann: bool
+    """
 
     def __init__(self, url: str = "sqlite://", init_diskann: bool = False) -> None:  # noqa: FBT001, FBT002
-        """Initialize the synchronous version of the AIOPostgres class."""
+        """Initialize the synchronous PostgreSQL client.
+
+        :param url: Database connection URL.
+        :type url: str
+        :param init_diskann: Whether to initialize vector similarity indices.
+        :type init_diskann: bool
+        """
         super().__init__(url)
         self.engine = create_engine(self.url.replace("+asyncpg", ""))
         self._session = sessionmaker(bind=self.engine)
@@ -173,7 +263,12 @@ class PostgresBase(DatabaseBase):
         self._transaction: SessionTransaction | None = None
 
     def __enter__(self) -> Session:
-        """Create a transactional context for the database."""
+        """Create a synchronous transaction context.
+
+        :returns: Database session with transaction.
+        :rtype: Session
+        :raises ValueError: If client is not in a valid state.
+        """
         self._context = self._session()
         if not self._context:
             self.logger.exception("Postgres client is not in a valid state")
@@ -182,7 +277,17 @@ class PostgresBase(DatabaseBase):
         return self._context
 
     def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
-        """Exit a transactional context for the database."""
+        """Exit the synchronous transaction context.
+
+        :param exc_type: Exception type if an error occurred.
+        :type exc_type: type[BaseException] | None
+        :param exc_val: Exception value if an error occurred.
+        :type exc_val: BaseException | None
+        :param exc_tb: Exception traceback if an error occurred.
+        :type exc_tb: TracebackType | None
+        :raises ValueError: If client is not in a valid state.
+        :raises: Re-raises any SQLAlchemy errors after rollback.
+        """
         if not is_sync_session_transaction(self._transaction) or not is_sync_session(self._context):
             self.logger.exception("Postgres client is not in a valid state")
             raise ValueError
@@ -197,17 +302,39 @@ class PostgresBase(DatabaseBase):
             self._context = None
             self._transaction = None
 
+
 class Postgres(PostgresBase):
-    """The synchronous version of the Postgres class which is mocked in CI."""
+    """Synchronous PostgreSQL client with CI environment handling.
+
+    This class extends PostgresBase with special handling for CI environments,
+    where database operations are mocked.
+
+    :param url: Database connection URL.
+    :type url: str
+    :param init_diskann: Whether to initialize vector similarity indices.
+    :type init_diskann: bool
+    """
 
     def __init__(self, url: str = "sqlite://", init_diskann: bool = False) -> None:  # noqa: FBT001, FBT002
-        """Initialize the synchronous version of the Postgres class which is mocked in CI."""
+        """Initialize the synchronous PostgreSQL client.
+
+        :param url: Database connection URL.
+        :type url: str
+        :param init_diskann: Whether to initialize vector similarity indices.
+        :type init_diskann: bool
+        """
         if os.getenv("CI"):
             return
         super().__init__(url, init_diskann)
 
     def __getattr__(self, name: str) -> Callable[[Any], None | EllipsisType]:
-        """Get an attribute from the synchronous Postgres class which is mocked in CI."""
+        """Get attribute with CI environment handling.
+
+        :param name: Attribute name.
+        :type name: str
+        :returns: Mock function in CI, actual attribute otherwise.
+        :rtype: Callable[[Any], None | EllipsisType]
+        """
         if os.getenv("CI"):
             return lambda *_, **__: ...
         return getattr(super(PostgresBase, self), name)

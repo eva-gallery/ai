@@ -32,7 +32,9 @@ alembic = "1.*"
 psycopg2-binary = "2.*"
 
 [tool.poetry.group.dev.dependencies]
-alembic = "1.*"
+sphinx = "7.*"
+sphinx-rtd-theme = "2.*"
+sphinx-autodoc-typehints = "2.*"
 pre-commit = "3.*"
 bandit = "1.*"
 pytest = "8.*"

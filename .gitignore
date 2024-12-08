@@ -6,3 +6,6 @@
 
 # Ignore dynaconf secret files
 .secrets.*
+
+# Sphinx documentation WIP
+docs

@@ -1,4 +1,14 @@
-"""The AI API module setup."""
+"""Main initialization module for the AI API service.
+
+This module handles the initialization of the AI API service, including:
+- Configuration loading using Dynaconf
+- Environment variable setup
+- Safe globals configuration for sentence transformers
+- Model cache directory setup
+
+The module uses Dynaconf for configuration management, supporting multiple
+configuration files and environment-based settings.
+"""
 
 import os
 from pathlib import Path

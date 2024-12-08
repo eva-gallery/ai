@@ -1,4 +1,15 @@
-"""API service for the AI API."""
+"""Main API service module for the AI API.
+
+This module provides the main API service that handles image processing, search operations,
+and database interactions. It coordinates between the inference service, database,
+and external services while managing authentication and request processing.
+
+The service provides endpoints for:
+- Image processing and watermarking
+- Similarity-based image search
+- Text-based image search
+- Health and readiness checks
+"""
 
 from __future__ import annotations
 
@@ -18,9 +29,9 @@ from jwt.exceptions import InvalidTokenError
 from PIL.Image import Image as PILImage
 from sqlalchemy import select
 
-from . import settings
-from .database import AIOPostgres
-from .model import (
+from ai_api import settings
+from ai_api.database import AIOPostgres
+from ai_api.model import (
     AddWatermarkRequest,
     AIGeneratedStatus,
     APIServiceProto,
@@ -31,18 +42,34 @@ from .model import (
     RawImageSearchRequest,
     SearchResponse,
 )
-from .orm import GalleryEmbedding, Image
-from .services import InferenceService
-from .util import get_logger
+from ai_api.orm import GalleryEmbedding, Image
+from ai_api.services import InferenceService
+from ai_api.util import get_logger
 
 
 @lru_cache(maxsize=4096)
 async def _get_and_cache_query_embeddings(query: str, embedding_service: InferenceServiceProto) -> tuple[float, ...]:
+    """Get and cache text query embeddings.
+    
+    :param query: Text query to embed.
+    :type query: str
+    :param embedding_service: Service to generate embeddings.
+    :type embedding_service: InferenceServiceProto
+    :returns: Tuple of embedding values.
+    :rtype: tuple[float, ...]
+    """
     return tuple((await embedding_service.embed_text([query]))[0])
 
 
 @lru_cache(maxsize=4096)
 async def _search_image_id_cache(image_id: int) -> tuple[float] | None:
+    """Get cached image embeddings by ID.
+    
+    :param image_id: Database ID of the image.
+    :type image_id: int
+    :returns: Tuple of embedding values if found.
+    :rtype: tuple[float] | None
+    """
     async with AIOPostgres() as conn:
         # First get the embedding for the input image_id
         embedding_stmt = select(GalleryEmbedding).where(GalleryEmbedding.image_id == image_id)
@@ -56,10 +83,22 @@ async def _search_image_id_cache(image_id: int) -> tuple[float] | None:
     **settings.bentoml.service.api.to_dict(),
 )
 class APIService(APIServiceProto):
-    """API service for the AI API."""
+    """Main API service for handling image processing and search operations.
+    
+    This service coordinates between the inference service, database, and external services
+    to provide image processing, search, and management capabilities.
+    
+    Attributes:
+        embedding_service: Service for generating embeddings and AI operations.
+        logger: Logger instance for service logging.
+        ctx: BentoML context for request handling.
+        db_healthy: Flag indicating database health status.
+        background_tasks: Set of running background tasks.
+        jwt_secret: Secret for JWT token validation.
+    """
 
     def __init__(self) -> None:
-        """Initialize the API service."""
+        """Initialize the API service with required dependencies."""
         self.embedding_service: InferenceServiceProto = cast(InferenceServiceProto, bentoml.depends(InferenceService))
         self.logger = get_logger()
         self.ctx = bentoml.Context()
@@ -69,7 +108,12 @@ class APIService(APIServiceProto):
         asyncio.run_coroutine_threadsafe(self._init_postgres(), asyncio.get_event_loop())
 
     def _verify_jwt(self, ctx: bentoml.Context) -> None:
-        """Verify JWT token from Authorization header."""
+        """Verify JWT token from request Authorization header.
+        
+        :param ctx: BentoML request context.
+        :type ctx: bentoml.Context
+        :raises ValueError: If token is missing or invalid.
+        """
         auth_header = ctx.request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
             ctx.response.status_code = 401
@@ -84,7 +128,10 @@ class APIService(APIServiceProto):
             raise ValueError(msg) from e
 
     async def _init_postgres(self) -> None:
-        """Initialize the Postgres client."""
+        """Initialize the Postgres database connection.
+        
+        :raises Exception: If database initialization fails.
+        """
         try:
             AIOPostgres(url=settings.postgres.url)
             self._migrate_database()
@@ -94,7 +141,10 @@ class APIService(APIServiceProto):
         self.db_healthy = True
 
     def _migrate_database(self) -> None:
-        """Run alembic migrations to head revision."""
+        """Run database migrations using Alembic.
+        
+        This method is skipped in CI environments.
+        """
         if os.getenv("CI"):
             return
         from alembic import command
@@ -111,7 +161,20 @@ class APIService(APIServiceProto):
         gallery_embedding_model: GalleryEmbedding,
         most_similar_image_uuid: uuid.UUID | None = None,
     ) -> None:
-        """Save image data to the database and send to the backend."""
+        """Save image data and notify external services.
+        
+        :param image_pil: PIL image to save.
+        :type image_pil: PILImage
+        :param duplicate_status: Status indicating if image is duplicate.
+        :type duplicate_status: ImageDuplicateStatus
+        :param image_model: Database model for image data.
+        :type image_model: Image
+        :param gallery_embedding_model: Database model for image embeddings.
+        :type gallery_embedding_model: GalleryEmbedding
+        :param most_similar_image_uuid: UUID of most similar image if duplicate.
+        :type most_similar_image_uuid: uuid.UUID | None
+        :raises: May raise exceptions during database or HTTP operations.
+        """
         # Prepare headers with JWT token
         headers = {
             "Authorization": f"Bearer {jwt.encode({'sub': 'ai-service'}, self.jwt_secret, algorithm='HS256')}",
@@ -183,7 +246,18 @@ class APIService(APIServiceProto):
         ai_generated_status: AIGeneratedStatus,
         metadata: dict[str, Any],
     ) -> None:
-        """Process image data by embedding and checking for duplicates and plagiarism, then adding watermarks."""
+        """Process image data including embedding, duplicate checking, and watermarking.
+        
+        :param image_pil: PIL image to process.
+        :type image_pil: PILImage
+        :param artwork_uuid: UUID of the artwork.
+        :type artwork_uuid: str
+        :param ai_generated_status: Initial AI generation status.
+        :type ai_generated_status: AIGeneratedStatus
+        :param metadata: Additional image metadata.
+        :type metadata: dict[str, Any]
+        :raises: May raise exceptions during image processing or database operations.
+        """
         # Generate a shorter hash that will fit in 32 bits
         original_hash = hashlib.sha256(image_pil.tobytes()).hexdigest()[:8]  # First 32 bits (8 hex chars)
 
@@ -308,7 +382,20 @@ class APIService(APIServiceProto):
         route="/image/search_query",
     )
     async def search_query(self, query: str, count: int = 50, page: int = 0, ctx: bentoml.Context | None = None) -> SearchResponse:
-        """Search for images by query."""
+        """Search for images using a text query.
+        
+        :param query: Text query to search with.
+        :type query: str
+        :param count: Number of results per page.
+        :type count: int
+        :param page: Page number (0-based).
+        :type page: int
+        :param ctx: BentoML request context.
+        :type ctx: bentoml.Context | None
+        :returns: Search response containing matching image UUIDs.
+        :rtype: SearchResponse
+        :raises ValueError: If JWT token is invalid.
+        """
         self._verify_jwt(ctx)  # type: ignore[arg-type]
         embedded_text: tuple[float, ...] = await _get_and_cache_query_embeddings(
             query,
@@ -332,7 +419,20 @@ class APIService(APIServiceProto):
         route="/image/search_image",
     )
     async def search_image(self, image_uuid: str, count: int = 50, page: int = 0, ctx: bentoml.Context | None = None) -> ImageSearchResponse:  # type: ignore[misc]
-        """Search for images by image UUID."""
+        """Search for similar images using an image UUID.
+        
+        :param image_uuid: UUID of the reference image.
+        :type image_uuid: str
+        :param count: Number of results per page.
+        :type count: int
+        :param page: Page number (0-based).
+        :type page: int
+        :param ctx: BentoML request context.
+        :type ctx: bentoml.Context | None
+        :returns: Search response containing similar image UUIDs.
+        :rtype: ImageSearchResponse
+        :raises ValueError: If JWT token is invalid.
+        """
         self._verify_jwt(ctx)  # type: ignore[arg-type]
         image_uuid: uuid.UUID = uuid.UUID(image_uuid)  # type: ignore[arg-type]
         async with AIOPostgres() as conn:
@@ -375,7 +475,18 @@ class APIService(APIServiceProto):
         request: RawImageSearchRequest,
         ctx: bentoml.Context,
     ) -> ImageSearchResponse:
-        """Search for images by raw image bytes."""
+        """Search for similar images using a raw image.
+        
+        :param image: Raw image data to search with.
+        :type image: PILImage
+        :param request: Search request parameters.
+        :type request: RawImageSearchRequest
+        :param ctx: BentoML request context.
+        :type ctx: bentoml.Context
+        :returns: Search response containing similar image UUIDs.
+        :rtype: ImageSearchResponse
+        :raises ValueError: If JWT token is invalid.
+        """
         self._verify_jwt(ctx)
         if ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
             ctx.response.status_code = 503
@@ -412,7 +523,20 @@ class APIService(APIServiceProto):
         metadata: dict[str, Any],
         ctx: bentoml.Context,
     ) -> None:
-        """Process an image."""
+        """Process an image for storage and analysis.
+        
+        :param image: Image data to process.
+        :type image: PILImage
+        :param image_uuid: UUID for the image.
+        :type image_uuid: str
+        :param ai_generated_status: Initial AI generation status.
+        :type ai_generated_status: str
+        :param metadata: Additional image metadata.
+        :type metadata: dict[str, Any]
+        :param ctx: BentoML request context.
+        :type ctx: bentoml.Context
+        :raises ValueError: If JWT token is invalid.
+        """
         self._verify_jwt(ctx)
         if ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
             ctx.response.status_code = 503
@@ -434,7 +558,13 @@ class APIService(APIServiceProto):
 
     @bentoml.api(route="/healthz")
     async def healthz(self, ctx: bentoml.Context) -> dict[str, str]:
-        """Check whether the service is healthy."""
+        """Check service health status.
+        
+        :param ctx: BentoML request context.
+        :type ctx: bentoml.Context
+        :returns: Dictionary containing health status.
+        :rtype: dict[str, str]
+        """
         if not self.db_healthy:
             ctx.response.status_code = 503
             return {"status": "unhealthy"}
@@ -444,7 +574,14 @@ class APIService(APIServiceProto):
 
     @bentoml.api(route="/readyz")
     async def readyz(self, ctx: bentoml.Context) -> dict[str, str]:
-        """Readiness check for the service."""
+        """Check if service is ready to handle requests.
+        
+        :param ctx: BentoML request context.
+        :type ctx: bentoml.Context
+        :returns: Dictionary containing readiness status.
+        :rtype: dict[str, str]
+        :raises Exception: If readiness check fails.
+        """
         if ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
             ctx.response.status_code = 503
             return {"status": "not ready"}

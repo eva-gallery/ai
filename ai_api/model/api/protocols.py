@@ -1,4 +1,10 @@
-"""Protocol definitions for API services."""
+"""Module containing protocol definitions for API service interfaces.
+
+This module defines the protocol interfaces that API services must implement,
+ensuring type safety and consistent API contracts. It includes protocols for:
+- Inference service operations (embedding, detection, watermarking)
+- Main API service operations (search, processing, health checks)
+"""
 
 from __future__ import annotations
 
@@ -17,7 +23,17 @@ if TYPE_CHECKING:
 
 
 class InferenceServiceProto(Protocol):
-    """Protocol defining the interface for the inference service."""
+    """Protocol defining the interface for ML inference operations.
+
+    This protocol defines the required methods for the inference service,
+    including operations for:
+    - Text and image embedding generation
+    - Image captioning
+    - AI generation detection
+    - Watermark operations
+
+    All methods are asynchronous and support batch operations for efficiency.
+    """
 
     readyz: APIMethod[[], Coroutine[Any, Any, dict[str, str]]]
     embed_text: APIMethod[
@@ -55,7 +71,23 @@ class InferenceServiceProto(Protocol):
 
 
 class APIServiceProto(Protocol):
-    """Protocol defining the interface for the API service."""
+    """Protocol defining the interface for the main API service.
+
+    This protocol defines the required attributes and methods for the main API
+    service, including:
+    - Health and readiness checks
+    - Search operations (text and image-based)
+    - Image processing operations
+
+    The service coordinates between the inference service, database, and external
+    services to provide the complete API functionality.
+
+    Attributes:
+        db_healthy: Flag indicating database health status.
+        embedding_service: Reference to the inference service.
+        ctx: BentoML request context.
+
+    """
 
     db_healthy: bool
     embedding_service: InferenceServiceProto

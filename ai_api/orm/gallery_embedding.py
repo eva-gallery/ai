@@ -1,5 +1,11 @@
 # type: ignore[import-cycle]
-"""The ORM model for the gallery embedding."""
+"""Module containing the ORM model for image embeddings and similarity search.
+
+This module defines the database schema for storing various types of embeddings
+associated with images, including raw image embeddings, watermarked image embeddings,
+metadata embeddings, and caption embeddings. It also provides methods for calculating
+similarity distances between embeddings.
+"""
 
 from __future__ import annotations
 
@@ -10,17 +16,32 @@ from sqlalchemy import ColumnElement, Float, ForeignKey, custom_op
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ai_api import settings
-
-from .base import Base
+from ai_api.orm.base import Base
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from .image import Image
+    from ai_api.orm.image import Image
 
 
 class GalleryEmbedding(Base):
-    """The ORM model for the gallery embedding."""
+    """SQLAlchemy ORM model for storing image embeddings and similarity search data.
+
+    This class represents the database schema for storing various types of embeddings
+    used in similarity search operations. It includes embeddings for the original image,
+    watermarked version, metadata, and captions.
+
+    Attributes:
+        id: Primary key auto-incrementing ID.
+        image_id: Foreign key reference to the associated image.
+        image_embedding: Vector embedding of the original image.
+        watermarked_image_embedding: Vector embedding of the watermarked image.
+        metadata_embedding: Vector embedding of the image metadata.
+        user_caption_embedding: Optional vector embedding of user-provided caption.
+        generated_caption_embedding: Optional vector embedding of AI-generated caption.
+        image: Relationship to the associated Image model.
+
+    """
 
     __tablename__ = "gallery_embedding"
 
@@ -37,25 +58,55 @@ class GalleryEmbedding(Base):
 
     @classmethod
     def image_embedding_distance_to(cls, vector: Sequence[float]) -> ColumnElement[float]:
-        """Calculate the distance between the image embedding and a vector."""
+        """Calculate cosine similarity between image embedding and input vector.
+
+        :param vector: Input vector to compare against image embedding.
+        :type vector: Sequence[float]
+        :returns: Negative cosine distance (higher value means more similar).
+        :rtype: ColumnElement[float]
+        """
         return custom_op("<#>", return_type=Float)(cls.image_embedding, vector) * -1
 
     @classmethod
     def watermarked_image_embedding_distance_to(cls, vector: Sequence[float]) -> ColumnElement[float]:
-        """Calculate the distance between the watermarked image embedding and a vector."""
+        """Calculate cosine similarity between watermarked image embedding and input vector.
+
+        :param vector: Input vector to compare against watermarked image embedding.
+        :type vector: Sequence[float]
+        :returns: Negative cosine distance (higher value means more similar).
+        :rtype: ColumnElement[float]
+        """
         return custom_op("<#>", return_type=Float)(cls.watermarked_image_embedding, vector) * -1
 
     @classmethod
     def metadata_embedding_distance_to(cls, vector: Sequence[float]) -> ColumnElement[float]:
-        """Calculate the distance between the metadata embedding and a vector."""
+        """Calculate cosine similarity between metadata embedding and input vector.
+
+        :param vector: Input vector to compare against metadata embedding.
+        :type vector: Sequence[float]
+        :returns: Negative cosine distance (higher value means more similar).
+        :rtype: ColumnElement[float]
+        """
         return custom_op("<#>", return_type=Float)(cls.metadata_embedding, vector) * -1
 
     @classmethod
     def user_caption_embedding_distance_to(cls, vector: Sequence[float]) -> ColumnElement[float]:
-        """Calculate the distance between the user caption embedding and a vector."""
+        """Calculate cosine similarity between user caption embedding and input vector.
+
+        :param vector: Input vector to compare against user caption embedding.
+        :type vector: Sequence[float]
+        :returns: Negative cosine distance (higher value means more similar).
+        :rtype: ColumnElement[float]
+        """
         return custom_op("<#>", return_type=Float)(cls.user_caption_embedding, vector) * -1
 
     @classmethod
     def generated_caption_embedding_distance_to(cls, vector: Sequence[float]) -> ColumnElement[float]:
-        """Calculate the distance between the generated caption embedding and a vector."""
+        """Calculate cosine similarity between generated caption embedding and input vector.
+
+        :param vector: Input vector to compare against generated caption embedding.
+        :type vector: Sequence[float]
+        :returns: Negative cosine distance (higher value means more similar).
+        :rtype: ColumnElement[float]
+        """
         return custom_op("<#>", return_type=Float)(cls.generated_caption_embedding, vector) * -1
