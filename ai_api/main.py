@@ -32,7 +32,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import JSONResponse
 
-from ai_api import settings
+from ai_api import API_SERVICE_KWARGS, settings
 from ai_api.database import AIOPostgres
 from ai_api.model import (
     AddWatermarkRequest,
@@ -86,7 +86,7 @@ app = FastAPI()
 
 @bentoml.service(
     name="evagallery_ai_api",
-    **settings.bentoml.service.api.to_dict(),
+    **API_SERVICE_KWARGS,
 )
 @bentoml.asgi_app(app)
 class APIService(APIServiceProto):

@@ -24,7 +24,7 @@ from sentence_transformers import SentenceTransformer
 from torch.cuda import is_available
 from transformers import AutoModelForImageClassification, BlipForConditionalGeneration, BlipImageProcessor, BlipProcessor, pipeline
 
-from ai_api import settings
+from ai_api import INFERENCE_SERVICE_KWARGS, settings
 from ai_api.model.api.embed import EmbedRequest
 from ai_api.model.api.process import AddWatermarkRequest, AIGeneratedStatus, ListAddWatermarkRequest
 from ai_api.model.api.protocols import InferenceServiceProto
@@ -33,7 +33,7 @@ from ai_api.util.logger import get_logger
 
 @bentoml.service(
     name="evagellery_ai_inference",
-    **settings.bentoml.service.embedding.to_dict(),
+    **INFERENCE_SERVICE_KWARGS,
 )
 class InferenceService(InferenceServiceProto):
     """BentoML service for AI inference operations.
