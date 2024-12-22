@@ -65,7 +65,7 @@ if settings.debug:
 
 
 API_SERVICE_KWARGS = filter_none_from_dict_recursive(settings.bentoml.service.api.to_dict())
-INFERENCE_SERVICE_KWARGS = filter_none_from_dict_recursive(settings.bentoml.service.inference.to_dict())
+INFERENCE_SERVICE_KWARGS = filter_none_from_dict_recursive(settings.bentoml.service.embedding.to_dict())
 
 
 __all__ = ["API_SERVICE_KWARGS", "INFERENCE_SERVICE_KWARGS", "settings"]
