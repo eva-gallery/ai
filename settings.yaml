@@ -51,7 +51,6 @@ default:
         tracing: "@format {this.bentoml.service.api.tracing}"
 
 development:
-  test: 1
   eva_backend:
     url: "http://localhost:8000"
     patch_endpoint: "/ai/image/update"
@@ -118,6 +117,8 @@ production:
     url: "@format postgresql+asyncpg://{this.postgres.user}:{this.postgres.password}@{this.postgres.host}:{this.postgres.port}/{this.postgres.db}"
 
 testing:
+  test: 1
+  debug: true
   eva_backend:
     url: "http://test-api:8000"
     patch_endpoint: "/ai/image/update"
