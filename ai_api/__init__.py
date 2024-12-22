@@ -54,5 +54,8 @@ if os.getenv("HF_HOME") is None:
 if os.getenv("HF_OFFLINE") is None:
     os.environ["HF_OFFLINE"] = settings.bentoml.hf_offline or "false"
 
+if settings.debug:
+    os.environ["CI"] = "true"
+
 
 __all__ = ["settings"]

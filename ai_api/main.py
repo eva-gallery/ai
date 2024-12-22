@@ -25,9 +25,12 @@ import aiohttp
 import bentoml
 import jwt
 import numpy as np
+from fastapi import FastAPI
 from jwt.exceptions import InvalidTokenError
 from PIL.Image import Image as PILImage
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import SQLAlchemyError
+from starlette.responses import JSONResponse
 
 from ai_api import settings
 from ai_api.database import AIOPostgres
@@ -50,7 +53,7 @@ from ai_api.util import get_logger
 @lru_cache(maxsize=4096)
 async def _get_and_cache_query_embeddings(query: str, embedding_service: InferenceServiceProto) -> tuple[float, ...]:
     """Get and cache text query embeddings.
-    
+
     :param query: Text query to embed.
     :type query: str
     :param embedding_service: Service to generate embeddings.
@@ -64,7 +67,7 @@ async def _get_and_cache_query_embeddings(query: str, embedding_service: Inferen
 @lru_cache(maxsize=4096)
 async def _search_image_id_cache(image_id: int) -> tuple[float] | None:
     """Get cached image embeddings by ID.
-    
+
     :param image_id: Database ID of the image.
     :type image_id: int
     :returns: Tuple of embedding values if found.
@@ -78,16 +81,20 @@ async def _search_image_id_cache(image_id: int) -> tuple[float] | None:
         return tuple(embedding.image_embedding) if embedding else None
 
 
+app = FastAPI()
+
+
 @bentoml.service(
     name="evagallery_ai_api",
     **settings.bentoml.service.api.to_dict(),
 )
+@bentoml.asgi_app(app)
 class APIService(APIServiceProto):
     """Main API service for handling image processing and search operations.
-    
+
     This service coordinates between the inference service, database, and external services
     to provide image processing, search, and management capabilities.
-    
+
     Attributes:
         embedding_service: Service for generating embeddings and AI operations.
         logger: Logger instance for service logging.
@@ -95,11 +102,13 @@ class APIService(APIServiceProto):
         db_healthy: Flag indicating database health status.
         background_tasks: Set of running background tasks.
         jwt_secret: Secret for JWT token validation.
+
     """
 
     def __init__(self) -> None:
         """Initialize the API service with required dependencies."""
         self.embedding_service: InferenceServiceProto = cast(InferenceServiceProto, bentoml.depends(InferenceService))
+
         self.logger = get_logger()
         self.ctx = bentoml.Context()
         self.db_healthy = False
@@ -109,11 +118,14 @@ class APIService(APIServiceProto):
 
     def _verify_jwt(self, ctx: bentoml.Context) -> None:
         """Verify JWT token from request Authorization header.
-        
+
         :param ctx: BentoML request context.
         :type ctx: bentoml.Context
         :raises ValueError: If token is missing or invalid.
         """
+        if os.getenv("CI"):
+            return
+
         auth_header = ctx.request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
             ctx.response.status_code = 401
@@ -129,7 +141,7 @@ class APIService(APIServiceProto):
 
     async def _init_postgres(self) -> None:
         """Initialize the Postgres database connection.
-        
+
         :raises Exception: If database initialization fails.
         """
         try:
@@ -142,7 +154,7 @@ class APIService(APIServiceProto):
 
     def _migrate_database(self) -> None:
         """Run database migrations using Alembic.
-        
+
         This method is skipped in CI environments.
         """
         if os.getenv("CI"):
@@ -162,7 +174,7 @@ class APIService(APIServiceProto):
         most_similar_image_uuid: uuid.UUID | None = None,
     ) -> None:
         """Save image data and notify external services.
-        
+
         :param image_pil: PIL image to save.
         :type image_pil: PILImage
         :param duplicate_status: Status indicating if image is duplicate.
@@ -247,7 +259,7 @@ class APIService(APIServiceProto):
         metadata: dict[str, Any],
     ) -> None:
         """Process image data including embedding, duplicate checking, and watermarking.
-        
+
         :param image_pil: PIL image to process.
         :type image_pil: PILImage
         :param artwork_uuid: UUID of the artwork.
@@ -383,7 +395,7 @@ class APIService(APIServiceProto):
     )
     async def search_query(self, query: str, count: int = 50, page: int = 0, ctx: bentoml.Context | None = None) -> SearchResponse:
         """Search for images using a text query.
-        
+
         :param query: Text query to search with.
         :type query: str
         :param count: Number of results per page.
@@ -420,7 +432,7 @@ class APIService(APIServiceProto):
     )
     async def search_image(self, image_uuid: str, count: int = 50, page: int = 0, ctx: bentoml.Context | None = None) -> ImageSearchResponse:  # type: ignore[misc]
         """Search for similar images using an image UUID.
-        
+
         :param image_uuid: UUID of the reference image.
         :type image_uuid: str
         :param count: Number of results per page.
@@ -437,7 +449,7 @@ class APIService(APIServiceProto):
         image_uuid: uuid.UUID = uuid.UUID(image_uuid)  # type: ignore[arg-type]
         async with AIOPostgres() as conn:
             # First get the image ID from the UUID
-            image_id_stmt = select(Image.id).where(Image.image_uuid == image_uuid)
+            image_id_stmt = select(Image.id).where(Image.image_uuid == image_uuid, Image.public.is_(True))
             image_id_result = await conn.execute(image_id_stmt)
             image_id = await image_id_result.scalar_one_or_none()  # type: ignore[misc]
 
@@ -476,7 +488,7 @@ class APIService(APIServiceProto):
         ctx: bentoml.Context,
     ) -> ImageSearchResponse:
         """Search for similar images using a raw image.
-        
+
         :param image: Raw image data to search with.
         :type image: PILImage
         :param request: Search request parameters.
@@ -512,6 +524,55 @@ class APIService(APIServiceProto):
 
         return ImageSearchResponse(image_uuid=list(results))  # type: ignore[misc]
 
+    @app.patch(path="/image/set-public")  # type: ignore[misc]
+    async def publish_image(self, image_uuid: str | list[str]) -> JSONResponse:
+        """Publish one or multiple images by setting their public flag to True.
+
+        :param image_uuid: Single image UUID or list of image UUIDs to publish.
+        :type image_uuid: str | list[str]
+        :raises SQLAlchemyError: If the database update fails.
+        :returns: JSONResponse with status code and error message if any.
+        :rtype: JSONResponse
+        """
+        if isinstance(image_uuid, str):
+            image_uuid = [image_uuid]
+
+        async with AIOPostgres() as conn:
+            try:
+                stmt = select(Image.image_uuid).where(Image.image_uuid.in_(image_uuid))
+                result = await conn.execute(stmt)
+                existing_uuids = set(await (await result.scalars()).all())
+
+                missing_uuids = set(image_uuid) - existing_uuids
+                if missing_uuids:
+                    return JSONResponse(
+                        status_code=404,
+                        content={
+                            "error": "One or more requested images not found",
+                            "missing_uuids": list(missing_uuids),
+                        },
+                    )
+
+                # Perform the update
+                stmt = (
+                    update(Image)
+                    .where(Image.image_uuid.in_(image_uuid))
+                    .values(public=True)
+                )
+                result = await conn.execute(stmt)
+
+                # Double check affected rows
+                if result.rowcount != len(image_uuid):
+                    self.logger.exception("Expected to update {img_count} rows, but updated {row_count}", img_count=len(image_uuid), row_count=result.rowcount)
+                    conn.rollback()
+                    return JSONResponse(status_code=500, content={"error": "Failed to publish all images"})
+
+            except SQLAlchemyError as e:
+                self.logger.exception("Failed to publish images: {e}", e=e)
+                raise
+
+        return JSONResponse(status_code=200, content={})
+
     @bentoml.api(
         route="/image/process",
     )
@@ -524,7 +585,7 @@ class APIService(APIServiceProto):
         ctx: bentoml.Context,
     ) -> None:
         """Process an image for storage and analysis.
-        
+
         :param image: Image data to process.
         :type image: PILImage
         :param image_uuid: UUID for the image.
@@ -559,7 +620,7 @@ class APIService(APIServiceProto):
     @bentoml.api(route="/healthz")
     async def healthz(self, ctx: bentoml.Context) -> dict[str, str]:
         """Check service health status.
-        
+
         :param ctx: BentoML request context.
         :type ctx: bentoml.Context
         :returns: Dictionary containing health status.
@@ -575,7 +636,7 @@ class APIService(APIServiceProto):
     @bentoml.api(route="/readyz")
     async def readyz(self, ctx: bentoml.Context) -> dict[str, str]:
         """Check if service is ready to handle requests.
-        
+
         :param ctx: BentoML request context.
         :type ctx: bentoml.Context
         :returns: Dictionary containing readiness status.

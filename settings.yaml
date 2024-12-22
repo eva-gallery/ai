@@ -1,4 +1,5 @@
 default:
+  debug: false
   jwt_secret: "secret"
   test: 0
   model:
