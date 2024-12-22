@@ -18,6 +18,7 @@ from sqlalchemy.exc import InvalidRequestError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm.session import Session, SessionTransaction, sessionmaker
 
+from ai_api import settings
 from ai_api.util.guard import is_sync_session, is_sync_session_transaction
 from ai_api.util.logger import get_logger
 from ai_api.util.singleton import Singleton
