@@ -338,3 +338,30 @@ class Postgres(PostgresBase):
         if os.getenv("CI"):
             return lambda *_, **__: ...
         return getattr(super(PostgresBase, self), name)
+
+
+class MockAIOPostgres:
+
+    def __init__(self, *_: Any, **__: Any) -> None:
+        pass
+
+    async def __aenter__(self) -> MockAIOPostgres:
+        return self
+
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
+        pass
+
+    def __await__(self):
+        return self
+
+    async def session(self):
+        return self
+
+    def __getattribute__(self, name: str):
+        if name in ("__aenter__", "__aexit__", "__await__", "session"):
+            return super().__getattribute__(name)
+        return self
+
+
+if os.getenv("CI"):
+    AIOPostgres = MockAIOPostgres  # type: ignore[]

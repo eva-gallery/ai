@@ -24,9 +24,9 @@ class ImageDuplicateStatus(Enum):
 
     """
 
-    OK = "ok"
-    EXISTS = "exists"
-    PLAGIARIZED = "plagiarized"
+    OK = "OK"
+    EXISTS = "EXISTS"
+    PLAGIARIZED = "PLAGIARIZED"
 
 
 class ImageDuplicateResponse(IODescriptor):
