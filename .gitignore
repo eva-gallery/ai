@@ -9,3 +9,7 @@
 
 # Sphinx documentation WIP
 docs
+
+# Local files
+.env
+settings.local.yaml

@@ -10,7 +10,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import UUID, Enum, Index, String
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import BOOLEAN, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ai_api.model.api import AIGeneratedStatus
@@ -22,10 +22,10 @@ if TYPE_CHECKING:
 
 class Image(Base):
     """SQLAlchemy ORM model for storing image data and metadata.
-    
+
     This class represents the database schema for storing images, including their
     metadata, AI generation status, and relationships to embeddings.
-    
+
     :param id: Primary key auto-incrementing ID.
     :type id: int
     :param image_uuid: Unique UUID for the image.
@@ -53,6 +53,7 @@ class Image(Base):
     image_uuid: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True, default=uuid.uuid4)
     original_image_uuid: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True)
     generated_status: Mapped[AIGeneratedStatus] = mapped_column(Enum(AIGeneratedStatus))
+    public: Mapped[bool] = mapped_column(BOOLEAN, default=False)
 
     image_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB)
     image_hash: Mapped[str] = mapped_column(String(8))
