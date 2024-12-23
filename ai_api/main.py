@@ -25,9 +25,10 @@ import aiohttp
 import bentoml
 import jwt
 import numpy as np
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile
 from jwt.exceptions import InvalidTokenError
 from PIL.Image import Image as PILImage  # noqa: TC002
+from PIL import Image
 from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import JSONResponse
@@ -45,7 +46,7 @@ from ai_api.model import (
     RawImageSearchRequest,
     SearchResponse,
 )
-from ai_api.orm import GalleryEmbedding, Image
+from ai_api.orm import GalleryEmbedding as ORMGalleryEmbedding, Image as ORMImage
 from ai_api.services import InferenceService
 from ai_api.util import get_logger
 
@@ -75,7 +76,7 @@ async def _search_image_id_cache(image_id: int) -> tuple[float] | None:
     """
     async with AIOPostgres() as conn:
         # First get the embedding for the input image_id
-        embedding_stmt = select(GalleryEmbedding).where(GalleryEmbedding.image_id == image_id)
+        embedding_stmt = select(ORMGalleryEmbedding).where(ORMGalleryEmbedding.image_id == image_id)
         embedding_result = await conn.execute(embedding_stmt)
         embedding = await embedding_result.scalar_one_or_none()  # type: ignore[misc]
         return tuple(embedding.image_embedding) if embedding else None
@@ -169,8 +170,8 @@ class APIService(APIServiceProto):
         self,
         image_pil: PILImage,
         duplicate_status: ImageDuplicateStatus,
-        image_model: Image,
-        gallery_embedding_model: GalleryEmbedding,
+        image_model: ORMImage,
+        gallery_embedding_model: ORMGalleryEmbedding,
         most_similar_image_uuid: uuid.UUID | None = None,
     ) -> None:
         """Save image data and notify external services.
@@ -180,9 +181,9 @@ class APIService(APIServiceProto):
         :param duplicate_status: Status indicating if image is duplicate.
         :type duplicate_status: ImageDuplicateStatus
         :param image_model: Database model for image data.
-        :type image_model: Image
+        :type image_model: ORMImage
         :param gallery_embedding_model: Database model for image embeddings.
-        :type gallery_embedding_model: GalleryEmbedding
+        :type gallery_embedding_model: ORMGalleryEmbedding
         :param most_similar_image_uuid: UUID of most similar image if duplicate.
         :type most_similar_image_uuid: uuid.UUID | None
         :raises: May raise exceptions during database or HTTP operations.
@@ -292,20 +293,20 @@ class APIService(APIServiceProto):
             elif has_watermark and watermark:
                 async with AIOPostgres().session() as conn:
                     result = await conn.execute(
-                        select(Image)
+                        select(ORMImage)
                         .filter_by(image_hash=watermark),  # Changed from md5_hash to image_hash
                     )
                     if result.scalar_one_or_none():
                         result = await conn.execute(
-                            select(GalleryEmbedding.image_embedding, GalleryEmbedding.image_id)
-                            .order_by(GalleryEmbedding.image_embedding_distance_to(image_embed)),
+                            select(ORMGalleryEmbedding.image_embedding, ORMGalleryEmbedding.image_id)
+                            .order_by(ORMGalleryEmbedding.image_embedding_distance_to(image_embed)),
                         )
 
                         float_vec, image_id = (await (await result.scalars()).one())  # type: ignore[misc]
 
                         result = await conn.execute(
-                            select(Image.image_uuid)
-                            .where(Image.id == image_id),
+                            select(ORMImage.image_uuid)
+                            .where(ORMImage.id == image_id),
                         )
 
                         most_similar_image_uuid = await (await result.scalars()).one()  # type: ignore[misc]
@@ -319,13 +320,13 @@ class APIService(APIServiceProto):
                 duplicate_status=duplicate_status,
                 most_similar_image_uuid=most_similar_image_uuid,
                 image_pil=image_pil,
-                image_model=Image(
+                image_model=ORMImage(
                     original_image_uuid=artwork_uuid,
                     generated_status=ai_generated_status,
                     image_metadata=metadata,
                     image_hash=original_hash,
                 ),
-                gallery_embedding_model=GalleryEmbedding(
+                gallery_embedding_model=ORMGalleryEmbedding(
                     image_embedding=image_embed,
                     watermarked_image_embedding=None,
                     metadata_embedding=None,
@@ -376,12 +377,12 @@ class APIService(APIServiceProto):
         await self._save_and_notify(
             duplicate_status=duplicate_status,
             image_pil=watermarked_image_pil,
-            image_model=Image(
+            image_model=ORMImage(
                 original_image_id=artwork_uuid,
                 image_metadata=metadata,
                 image_hash=original_hash,
             ),
-            gallery_embedding_model=GalleryEmbedding(
+            gallery_embedding_model=ORMGalleryEmbedding(
                 image_embedding=image_embed,
                 watermarked_image_embedding=watermarked_image_embed,
                 metadata_embedding=metadata_embedding,
@@ -390,7 +391,7 @@ class APIService(APIServiceProto):
             ),
         )
 
-    @app.get(path="/image/search_query")
+    @app.get(path="/image/search_query", response_model=None)
     async def search_query(self, query: str, count: int = 50, page: int = 0) -> SearchResponse:
         """Search for images using a text query.
 
@@ -412,8 +413,8 @@ class APIService(APIServiceProto):
 
         async with AIOPostgres() as conn:
             stmt = (
-                select(GalleryEmbedding.image_id)
-                .order_by(GalleryEmbedding.image_embedding_distance_to(embedded_text))
+                select(ORMGalleryEmbedding.image_id)
+                .order_by(ORMGalleryEmbedding.image_embedding_distance_to(embedded_text))
                 .limit(count)
                 .offset(page * count)
             )
@@ -423,7 +424,7 @@ class APIService(APIServiceProto):
 
         return SearchResponse(image_uuid=list(results))
 
-    @app.get(path="/image/search_image")
+    @app.get(path="/image/search_image", response_model=None)
     async def search_image(self, image_uuid: str, count: int = 50, page: int = 0) -> ImageSearchResponse:
         """Search for similar images using an image UUID.
 
@@ -441,7 +442,7 @@ class APIService(APIServiceProto):
         image_uuid_obj: uuid.UUID = uuid.UUID(image_uuid)
         async with AIOPostgres() as conn:
             # First get the image ID from the UUID
-            image_id_stmt = select(Image.id).where(Image.image_uuid == image_uuid_obj, Image.public.is_(True))
+            image_id_stmt = select(ORMImage.id).where(ORMImage.image_uuid == image_uuid_obj, ORMImage.public.is_(True))
             image_id_result = await conn.execute(image_id_stmt)
             image_id = await image_id_result.scalar_one_or_none()  # type: ignore[misc]
 
@@ -457,10 +458,10 @@ class APIService(APIServiceProto):
 
             # Get similar images, excluding the input image
             stmt = (
-                select(Image.image_uuid)
-                .join(GalleryEmbedding, GalleryEmbedding.image_id == Image.id)
-                .where(Image.id != image_id)
-                .order_by(GalleryEmbedding.image_embedding_distance_to(embedding))
+                select(ORMImage.image_uuid)
+                .join(ORMGalleryEmbedding, ORMGalleryEmbedding.image_id == ORMImage.id)
+                .where(ORMImage.id != image_id)
+                .order_by(ORMGalleryEmbedding.image_embedding_distance_to(embedding))
                 .limit(count)
                 .offset(page * count)
             )
@@ -470,19 +471,21 @@ class APIService(APIServiceProto):
 
         return ImageSearchResponse(image_uuid=list(results))
 
-    @app.get(path="/image/search_image_raw")
+    @app.get(path="/image/search_image_raw", response_model=None)
     async def search_image_raw(
         self,
-        image: PILImage,
-        request: RawImageSearchRequest,
+        image: UploadFile,
+        count: int = 50,
+        page: int = 0,
     ) -> ImageSearchResponse:
         """Search for similar images using a raw image.
 
         :param image: Raw image data to search with.
-        :type image: PILImage
-        :param request: Search request parameters.
-        :type request: RawImageSearchRequest
-        :param ctx: BentoML request context.
+        :type image: UploadFile
+        :param count: Number of results per page.
+        :type count: int
+        :param page: Page number (0-based).
+        :type page: int
         :returns: Search response containing similar image UUIDs.
         :rtype: ImageSearchResponse
         :raises ValueError: If JWT token is invalid.
@@ -494,17 +497,20 @@ class APIService(APIServiceProto):
 
         self.ctx.state["queued_processing"] = self.ctx.state.get("queued_processing", 0) + 1
 
-        image_pil = image.convert("RGB")
+        # Open file as bytes IO stream
+        image_bytes = io.BytesIO(await image.read())
+        image_bytes.seek(0)
+        image_pil = Image.open(image_bytes).convert("RGB")
         image_embed = (await self.embedding_service.embed_image([image_pil]))[0]
 
         self.ctx.state["queued_processing"] -= 1
 
         async with AIOPostgres() as conn:
             stmt = (
-                select(GalleryEmbedding.image_id)
-                .order_by(GalleryEmbedding.image_embedding_distance_to(image_embed))
-                .limit(request.count)
-                .offset(request.page * request.count)
+                select(ORMGalleryEmbedding.image_id)
+                .order_by(ORMGalleryEmbedding.image_embedding_distance_to(image_embed))
+                .limit(count)
+                .offset(page * count)
             )
 
             result = await conn.execute(stmt)
@@ -512,7 +518,7 @@ class APIService(APIServiceProto):
 
         return ImageSearchResponse(image_uuid=list(results))  # type: ignore[misc]
 
-    @app.patch(path="/image/set-public")  # type: ignore[misc]
+    @app.patch(path="/image/set-public", response_model=None)  # type: ignore[misc]
     async def publish_image(self, image_uuid: str | list[str]) -> JSONResponse:
         """Publish one or multiple images by setting their public flag to True.
 
@@ -527,7 +533,7 @@ class APIService(APIServiceProto):
 
         async with AIOPostgres() as conn:
             try:
-                stmt = select(Image.image_uuid).where(Image.image_uuid.in_(image_uuid))
+                stmt = select(ORMImage.image_uuid).where(ORMImage.image_uuid.in_(image_uuid))
                 result = await conn.execute(stmt)
                 existing_uuids = set(await (await result.scalars()).all())
 
@@ -543,8 +549,8 @@ class APIService(APIServiceProto):
 
                 # Perform the update
                 stmt = (
-                    update(Image)
-                    .where(Image.image_uuid.in_(image_uuid))
+                    update(ORMImage)
+                    .where(ORMImage.image_uuid.in_(image_uuid))
                     .values(public=True)
                 )
                 result = await conn.execute(stmt)
@@ -605,7 +611,7 @@ class APIService(APIServiceProto):
         ctx.state["queued_processing"] = ctx.state.get("queued_processing", 0) + 1
         ctx.response.status_code = 201
 
-    @app.get(path="/healthz")
+    @app.get(path="/healthz", response_model=dict[str, str])
     async def healthz(self) -> dict[str, str]:
         """Check service health status.
 
@@ -619,7 +625,7 @@ class APIService(APIServiceProto):
         self.ctx.response.status_code = 200
         return {"status": "healthy"}
 
-    @app.get(path="/readyz")
+    @app.get(path="/readyz", response_model=dict[str, str])
     async def readyz(self) -> dict[str, str]:
         """Check if service is ready to handle requests.
 
