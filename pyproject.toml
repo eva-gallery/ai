@@ -24,7 +24,7 @@ torch = { version = "2.*", source = "pytorch-gpu" }
 torchvision = { version = "0.*", source = "pytorch-gpu" }
 numpy = "2.*"
 aiosqlite = "0.*"
-aiohttp = ">=3.11.9,3.*"
+aiohttp = "3.*"
 sentence-transformers = "3.*"
 pgvector = "0.*"
 loguru = "0.*"
