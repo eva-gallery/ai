@@ -27,7 +27,7 @@ import jwt
 import numpy as np
 from fastapi import FastAPI
 from jwt.exceptions import InvalidTokenError
-from PIL.Image import Image as PILImage
+from PIL.Image import Image as PILImage  # noqa: TC002
 from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import JSONResponse
@@ -390,10 +390,8 @@ class APIService(APIServiceProto):
             ),
         )
 
-    @bentoml.api(
-        route="/image/search_query",
-    )
-    async def search_query(self, query: str, count: int = 50, page: int = 0, ctx: bentoml.Context | None = None) -> SearchResponse:
+    @app.get(path="/image/search_query")
+    async def search_query(self, query: str, count: int = 50, page: int = 0) -> SearchResponse:
         """Search for images using a text query.
 
         :param query: Text query to search with.
@@ -402,13 +400,11 @@ class APIService(APIServiceProto):
         :type count: int
         :param page: Page number (0-based).
         :type page: int
-        :param ctx: BentoML request context.
-        :type ctx: bentoml.Context | None
         :returns: Search response containing matching image UUIDs.
         :rtype: SearchResponse
         :raises ValueError: If JWT token is invalid.
         """
-        self._verify_jwt(ctx)  # type: ignore[arg-type]
+        self._verify_jwt(self.ctx)
         embedded_text: tuple[float, ...] = await _get_and_cache_query_embeddings(
             query,
             self.embedding_service,
@@ -427,10 +423,8 @@ class APIService(APIServiceProto):
 
         return SearchResponse(image_uuid=list(results))
 
-    @bentoml.api(
-        route="/image/search_image",
-    )
-    async def search_image(self, image_uuid: str, count: int = 50, page: int = 0, ctx: bentoml.Context | None = None) -> ImageSearchResponse:  # type: ignore[misc]
+    @app.get(path="/image/search_image")
+    async def search_image(self, image_uuid: str, count: int = 50, page: int = 0) -> ImageSearchResponse:
         """Search for similar images using an image UUID.
 
         :param image_uuid: UUID of the reference image.
@@ -439,17 +433,15 @@ class APIService(APIServiceProto):
         :type count: int
         :param page: Page number (0-based).
         :type page: int
-        :param ctx: BentoML request context.
-        :type ctx: bentoml.Context | None
         :returns: Search response containing similar image UUIDs.
         :rtype: ImageSearchResponse
         :raises ValueError: If JWT token is invalid.
         """
-        self._verify_jwt(ctx)  # type: ignore[arg-type]
-        image_uuid: uuid.UUID = uuid.UUID(image_uuid)  # type: ignore[arg-type]
+        self._verify_jwt(self.ctx)
+        image_uuid_obj: uuid.UUID = uuid.UUID(image_uuid)
         async with AIOPostgres() as conn:
             # First get the image ID from the UUID
-            image_id_stmt = select(Image.id).where(Image.image_uuid == image_uuid, Image.public.is_(True))
+            image_id_stmt = select(Image.id).where(Image.image_uuid == image_uuid_obj, Image.public.is_(True))
             image_id_result = await conn.execute(image_id_stmt)
             image_id = await image_id_result.scalar_one_or_none()  # type: ignore[misc]
 
@@ -478,14 +470,11 @@ class APIService(APIServiceProto):
 
         return ImageSearchResponse(image_uuid=list(results))
 
-    @bentoml.api(
-        route="/image/search_image_raw",
-    )
+    @app.get(path="/image/search_image_raw")
     async def search_image_raw(
         self,
         image: PILImage,
         request: RawImageSearchRequest,
-        ctx: bentoml.Context,
     ) -> ImageSearchResponse:
         """Search for similar images using a raw image.
 
@@ -494,22 +483,21 @@ class APIService(APIServiceProto):
         :param request: Search request parameters.
         :type request: RawImageSearchRequest
         :param ctx: BentoML request context.
-        :type ctx: bentoml.Context
         :returns: Search response containing similar image UUIDs.
         :rtype: ImageSearchResponse
         :raises ValueError: If JWT token is invalid.
         """
-        self._verify_jwt(ctx)
-        if ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
-            ctx.response.status_code = 503
+        self._verify_jwt(self.ctx)
+        if self.ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
+            self.ctx.response.status_code = 503
             return ImageSearchResponse(image_uuid=[])  # type: ignore[misc]
 
-        ctx.state["queued_processing"] = ctx.state.get("queued_processing", 0) + 1
+        self.ctx.state["queued_processing"] = self.ctx.state.get("queued_processing", 0) + 1
 
         image_pil = image.convert("RGB")
         image_embed = (await self.embedding_service.embed_image([image_pil]))[0]
 
-        ctx.state["queued_processing"] -= 1
+        self.ctx.state["queued_processing"] -= 1
 
         async with AIOPostgres() as conn:
             stmt = (
@@ -617,34 +605,30 @@ class APIService(APIServiceProto):
         ctx.state["queued_processing"] = ctx.state.get("queued_processing", 0) + 1
         ctx.response.status_code = 201
 
-    @bentoml.api(route="/healthz")
-    async def healthz(self, ctx: bentoml.Context) -> dict[str, str]:
+    @app.get(path="/healthz")
+    async def healthz(self) -> dict[str, str]:
         """Check service health status.
 
-        :param ctx: BentoML request context.
-        :type ctx: bentoml.Context
         :returns: Dictionary containing health status.
         :rtype: dict[str, str]
         """
         if not self.db_healthy:
-            ctx.response.status_code = 503
+            self.ctx.response.status_code = 503
             return {"status": "unhealthy"}
 
-        ctx.response.status_code = 200
+        self.ctx.response.status_code = 200
         return {"status": "healthy"}
 
-    @bentoml.api(route="/readyz")
-    async def readyz(self, ctx: bentoml.Context) -> dict[str, str]:
+    @app.get(path="/readyz")
+    async def readyz(self) -> dict[str, str]:
         """Check if service is ready to handle requests.
 
-        :param ctx: BentoML request context.
-        :type ctx: bentoml.Context
         :returns: Dictionary containing readiness status.
         :rtype: dict[str, str]
         :raises Exception: If readiness check fails.
         """
-        if ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
-            ctx.response.status_code = 503
+        if self.ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
+            self.ctx.response.status_code = 503
             return {"status": "not ready"}
 
         try:
@@ -660,8 +644,8 @@ class APIService(APIServiceProto):
                 raise
         except Exception as e:
             self.logger.exception("Readiness check failed: {e}", e=e)
-            ctx.response.status_code = 503
+            self.ctx.response.status_code = 503
             raise
         else:
-            ctx.response.status_code = 200
+            self.ctx.response.status_code = 200
             return {"status": "ready"}
