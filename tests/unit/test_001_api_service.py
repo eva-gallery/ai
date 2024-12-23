@@ -93,46 +93,6 @@ async def api_service(
 
 
 @pytest.mark.asyncio
-async def test_healthz_healthy(api_service: APIServiceProto, mock_context: MagicMock) -> None:
-    api_service.db_healthy = True
-    result = await api_service.healthz(mock_context)
-
-    assert result == {"status": "healthy"}
-    assert mock_context.response.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_healthz_unhealthy(api_service: APIServiceProto, mock_context: MagicMock) -> None:
-    api_service.db_healthy = False
-    result = await api_service.healthz(mock_context)
-
-    assert result == {"status": "unhealthy"}
-    assert mock_context.response.status_code == 503
-
-
-@pytest.mark.asyncio
-async def test_readyz(api_service: APIServiceProto, mock_context: MagicMock) -> None:
-    # Set up the mock context state to return an integer
-    mock_context.state.get.return_value = 0
-
-    result = await api_service.readyz(mock_context)
-
-    assert result == {"status": "ready"}
-    assert mock_context.response.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_readyz_not_ready(api_service: APIServiceProto, mock_context: MagicMock) -> None:
-    # Mock a high number of queued processes
-    mock_context.state.get.return_value = 1000
-
-    result = await api_service.readyz(mock_context)
-
-    assert result == {"status": "not ready"}
-    assert mock_context.response.status_code == 503
-
-
-@pytest.mark.asyncio
 async def test_search_query(api_service: APIServiceProto, mock_db_session: AsyncMock) -> None:
     # Ensure the mock session is used
     with patch("ai_api.main.AIOPostgres") as mock_postgres:

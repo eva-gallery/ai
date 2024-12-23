@@ -93,9 +93,9 @@ class APIServiceProto(Protocol):
     embedding_service: InferenceServiceProto
     ctx: Context
 
-    healthz: Callable[[Any], Coroutine[Any, Any, dict[str, str]]]
+    healthz: Callable[[], Coroutine[Any, Any, dict[str, str]]]
 
-    readyz: Callable[[Any], Coroutine[Any, Any, dict[str, str]]]
+    readyz: Callable[[], Coroutine[Any, Any, dict[str, str]]]
 
     search_query: Callable[
         [Any, str, int, int],

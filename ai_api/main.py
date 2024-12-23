@@ -27,8 +27,8 @@ import jwt
 import numpy as np
 from fastapi import FastAPI, UploadFile
 from jwt.exceptions import InvalidTokenError
-from PIL.Image import Image as PILImage  # noqa: TC002
 from PIL import Image
+from PIL.Image import Image as PILImage  # noqa: TC002
 from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import JSONResponse
@@ -43,10 +43,10 @@ from ai_api.model import (
     ImageDuplicateStatus,
     ImageSearchResponse,
     InferenceServiceProto,
-    RawImageSearchRequest,
     SearchResponse,
 )
-from ai_api.orm import GalleryEmbedding as ORMGalleryEmbedding, Image as ORMImage
+from ai_api.orm import GalleryEmbedding as ORMGalleryEmbedding
+from ai_api.orm import Image as ORMImage
 from ai_api.services import InferenceService
 from ai_api.util import get_logger
 
