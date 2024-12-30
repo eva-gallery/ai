@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine
+    from collections.abc import Callable, Coroutine
 
     from _bentoml_sdk.method import APIMethod
     from bentoml import Context
@@ -93,23 +93,17 @@ class APIServiceProto(Protocol):
     embedding_service: InferenceServiceProto
     ctx: Context
 
-    healthz: APIMethod[
-        [Context],
-        Coroutine[Any, Any, dict[str, str]],
-    ]
+    healthz: Callable[[], Coroutine[Any, Any, dict[str, str]]]
 
-    readyz: APIMethod[
-        [Context],
-        Coroutine[Any, Any, dict[str, str]],
-    ]
+    readyz: Callable[[], Coroutine[Any, Any, dict[str, str]]]
 
-    search_query: APIMethod[
-        [str, int, int],
+    search_query: Callable[
+        [Any, str, int, int],
         Coroutine[Any, Any, SearchResponse],
     ]
 
-    search_image: APIMethod[
-        [str, int, int],
+    search_image: Callable[
+        [Any, str, int, int],
         Coroutine[Any, Any, ImageSearchResponse],
     ]
 
