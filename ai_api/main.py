@@ -611,31 +611,28 @@ class APIService(APIServiceProto):
         ctx.state["queued_processing"] = ctx.state.get("queued_processing", 0) + 1
         ctx.response.status_code = 201
 
-    @app.get(path="/healthz", response_model=dict[str, str])
-    async def healthz(self) -> dict[str, str]:
+    @app.get(path="/healthz")
+    async def healthz(self) -> JSONResponse:
         """Check service health status.
 
         :returns: Dictionary containing health status.
-        :rtype: dict[str, str]
+        :rtype: JSONResponse
         """
         if not self.db_healthy:
-            self.ctx.response.status_code = 503
-            return {"status": "unhealthy"}
+            return JSONResponse(status_code=503, content={"status": "unhealthy"})
 
-        self.ctx.response.status_code = 200
-        return {"status": "healthy"}
+        return JSONResponse(status_code=200, content={"status": "healthy"})
 
-    @app.get(path="/readyz", response_model=dict[str, str])
-    async def readyz(self) -> dict[str, str]:
+    @app.get(path="/readyz")
+    async def readyz(self) -> JSONResponse:
         """Check if service is ready to handle requests.
 
         :returns: Dictionary containing readiness status.
-        :rtype: dict[str, str]
+        :rtype: JSONResponse
         :raises Exception: If readiness check fails.
         """
         if self.ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
-            self.ctx.response.status_code = 503
-            return {"status": "not ready"}
+            return JSONResponse(status_code=503, content={"status": "not ready"})
 
         try:
             # Test database connection
@@ -650,8 +647,7 @@ class APIService(APIServiceProto):
                 raise
         except Exception as e:
             self.logger.exception("Readiness check failed: {e}", e=e)
-            self.ctx.response.status_code = 503
             raise
         else:
-            self.ctx.response.status_code = 200
-            return {"status": "ready"}
+            return JSONResponse(status_code=200, content={"status": "ready"})
+

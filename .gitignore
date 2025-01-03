@@ -3,6 +3,7 @@
 /cache
 /models
 .pytest_cache
+/tmp
 
 # Ignore dynaconf secret files
 .secrets.*
@@ -13,3 +14,6 @@ docs
 # Local files
 .env
 settings.local.yaml
+
+# Debug files
+debug.py

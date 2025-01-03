@@ -19,6 +19,7 @@
         ".pytest_cache",
         ".github",
         "alembic",
-        "tests"
+        "tests",
+        "debug.py"
     ]
 }
