@@ -1,6 +1,6 @@
-"""The BentoML inference service for the AI API.
+"""The inference service for the AI API.
 
-This module provides a BentoML service for handling various AI-related operations including:
+This module provides a service for handling various AI-related operations including:
 - Image and text embedding generation
 - Image captioning
 - AI generation detection
@@ -12,31 +12,24 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-import bentoml
 import numpy as np
 import torch
 from diffusers.models.autoencoders.autoencoder_kl import AutoencoderKL
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2img import StableDiffusionXLImg2ImgPipeline
 from imwatermark import WatermarkDecoder, WatermarkEncoder
-from PIL import Image as PILImageObject
-from PIL.Image import Image as PILImage
+from PIL import Image as PILImage
 from sentence_transformers import SentenceTransformer
 from torch.cuda import is_available
 from transformers import AutoModelForImageClassification, BlipForConditionalGeneration, BlipImageProcessor, BlipProcessor, pipeline
 
-from ai_api import INFERENCE_SERVICE_KWARGS, settings
-from ai_api.model.api.embed import EmbedRequest
-from ai_api.model.api.process import AddWatermarkRequest, AIGeneratedStatus, ListAddWatermarkRequest
+from ai_api import settings
+from ai_api.model.api.process import AddWatermarkRequest, AIGeneratedStatus
 from ai_api.model.api.protocols import InferenceServiceProto
 from ai_api.util.logger import get_logger
 
 
-@bentoml.service(
-    name="evagellery_ai_inference",
-    **INFERENCE_SERVICE_KWARGS,
-)
 class InferenceService(InferenceServiceProto):
-    """BentoML service for AI inference operations.
+    """Service for AI inference operations.
 
     This service handles various AI operations including embedding generation,
     image captioning, AI detection, and watermark operations. It uses multiple
@@ -55,10 +48,14 @@ class InferenceService(InferenceServiceProto):
 
     """
 
-    def __init__(self) -> None:
-        """Initialize the inference service with required models and processors."""
+    def __init__(self, worker_index: int = 0) -> None:
+        """Initialize the inference service with required models and processors.
+
+        :param worker_index: Index of the worker for GPU device selection.
+        :type worker_index: int
+        """
         self.logger = get_logger()
-        self.device: torch.device = torch.device(f"cuda:{getattr(bentoml.server_context, 'worker_index', 1) - 1}" if is_available() else "cpu")
+        self.device: torch.device = torch.device(f"cuda:{worker_index}" if is_available() else "cpu")
         self.device_map_string = "balanced"  # can't use 'cuda:0', bug in safetensors
         self.model_img = SentenceTransformer(settings.model.embedding.image.name, device=str(self.device), cache_folder=settings.model.cache_dir)
         self.model_text = SentenceTransformer(settings.model.embedding.text.name, device=str(self.device), cache_folder=settings.model.cache_dir)
@@ -69,7 +66,6 @@ class InferenceService(InferenceServiceProto):
             BlipProcessor.from_pretrained(settings.model.captioning.name, cache_dir=settings.model.cache_dir, device=self.device),
         )
         self.caption_model: BlipForConditionalGeneration = BlipForConditionalGeneration.from_pretrained(settings.model.captioning.name, cache_dir=settings.model.cache_dir)
-
 
         self.model_ai_watermark = StableDiffusionXLImg2ImgPipeline.from_pretrained(
             settings.model.watermark.diffusion_model,
@@ -97,7 +93,6 @@ class InferenceService(InferenceServiceProto):
             device=self.device,
         )
 
-    @bentoml.api(route="/readyz")
     async def readyz(self) -> dict[str, str]:
         """Check if the service is ready to handle requests.
 
@@ -106,12 +101,6 @@ class InferenceService(InferenceServiceProto):
         """
         return {"status": "ready"}
 
-    @bentoml.api(
-        batchable=True,
-        batch_dim=0,
-        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
-        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
-    )
     async def embed_text(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for a list of text inputs.
 
@@ -124,18 +113,11 @@ class InferenceService(InferenceServiceProto):
         self.logger.debug("Text embedding results: {results}", results=results)
         return results
 
-    @bentoml.api(
-        batchable=True,
-        batch_dim=0,
-        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
-        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
-        input_spec=EmbedRequest,
-    )
-    async def embed_image(self, images: list[PILImage]) -> list[list[float]]:
+    async def embed_image(self, images: list[PILImage.Image]) -> list[list[float]]:
         """Generate embeddings for a list of images.
 
         :param images: List of PIL images to embed.
-        :type images: List[PILImage]
+        :type images: List[PILImage.Image]
         :returns: List of normalized embedding vectors.
         :rtype: list[list[float]]
         """
@@ -143,18 +125,11 @@ class InferenceService(InferenceServiceProto):
         self.logger.debug("Image embedding results: {results}", results=results)
         return results
 
-    @bentoml.api(
-        batchable=True,
-        batch_dim=0,
-        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
-        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
-        input_spec=EmbedRequest,
-    )
-    async def generate_caption(self, images: list[PILImage]) -> list[str]:
+    async def generate_caption(self, images: list[PILImage.Image]) -> list[str]:
         """Generate descriptive captions for a list of images.
 
         :param images: List of PIL images to generate captions for.
-        :type images: List[PILImage]
+        :type images: List[PILImage.Image]
         :returns: List of generated caption strings.
         :rtype: list[str]
         """
@@ -164,18 +139,11 @@ class InferenceService(InferenceServiceProto):
         self.logger.debug("Caption results: {captions}", captions=captions)
         return captions
 
-    @bentoml.api(
-        batchable=True,
-        batch_dim=0,
-        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
-        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
-        input_spec=EmbedRequest,
-    )
-    async def detect_ai_generation(self, images: list[PILImage]) -> list[AIGeneratedStatus]:
+    async def detect_ai_generation(self, images: list[PILImage.Image]) -> list[AIGeneratedStatus]:
         """Detect whether images were generated by AI.
 
         :param images: List of PIL images to check.
-        :type images: List[PILImage]
+        :type images: List[PILImage.Image]
         :returns: List of AI generation status enums.
         :rtype: list[AIGeneratedStatus]
         :raises: May raise exceptions from the underlying AI detection model.
@@ -194,18 +162,11 @@ class InferenceService(InferenceServiceProto):
         self.logger.debug("AI generation detection results: {results}", results=results)
         return results
 
-    @bentoml.api(
-        batchable=True,
-        batch_dim=0,
-        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
-        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
-        input_spec=EmbedRequest,
-    )
-    async def check_watermark(self, images: list[PILImage]) -> list[tuple[bool, str | None]]:
+    async def check_watermark(self, images: list[PILImage.Image]) -> list[tuple[bool, str | None]]:
         """Check for the presence of watermarks in images.
 
         :param images: List of PIL images to check for watermarks.
-        :type images: List[PILImage]
+        :type images: List[PILImage.Image]
         :returns: List of tuples containing (has_watermark, watermark_text).
         :rtype: list[tuple[bool, str | None]]
         :raises: May raise exceptions during watermark decoding.
@@ -230,18 +191,11 @@ class InferenceService(InferenceServiceProto):
         self.logger.debug("Watermark results: {results}", results=results)
         return results
 
-    @bentoml.api(
-        batchable=True,
-        batch_dim=0,
-        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
-        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
-        input_spec=EmbedRequest,
-    )
-    async def check_ai_watermark(self, images: list[PILImage]) -> list[bool]:
+    async def check_ai_watermark(self, images: list[PILImage.Image]) -> list[bool]:
         """Check for the presence of AI-specific watermarks in images.
 
         :param images: List of PIL images to check for AI watermarks.
-        :type images: List[PILImage]
+        :type images: List[PILImage.Image]
         :returns: List of boolean values indicating AI watermark presence.
         :rtype: list[bool]
         """
@@ -251,21 +205,13 @@ class InferenceService(InferenceServiceProto):
         self.logger.debug("AI watermark prediction: {pred_bool}", pred_bool=pred_bool)
         return pred_bool.tolist()
 
-    @bentoml.api(
-        batchable=True,
-        batch_dim=0,
-        max_batch_size=settings.bentoml.inference.slow_batched_op_max_batch_size,
-        max_latency_ms=settings.bentoml.inference.slow_batched_op_max_latency_ms,
-        input_spec=ListAddWatermarkRequest,
-        output_spec=EmbedRequest,
-    )
-    async def add_watermark(self, request: list[AddWatermarkRequest]) -> list[PILImage]:
+    async def add_watermark(self, request: list[AddWatermarkRequest]) -> list[PILImage.Image]:
         """Add watermarks to a list of images.
 
         :param request: List of watermark requests containing images and watermark text.
         :type request: List[AddWatermarkRequest]
         :returns: List of watermarked PIL images.
-        :rtype: list[PILImage]
+        :rtype: list[PILImage.Image]
         """
         wm = WatermarkEncoder()
         binaries = "".join(format(ord(c.watermark_text), "08b") for c in request)
@@ -274,26 +220,18 @@ class InferenceService(InferenceServiceProto):
         results = []
         for image, binary in zip(request, binaries, strict=False):
             wm.set_watermark("bits", binary)
-            results.append(PILImageObject.fromarray(wm.encode(np.asarray(image.image), settings.model.watermark.method)))
+            results.append(PILImage.fromarray(wm.encode(np.asarray(image.image), settings.model.watermark.method)))
 
         self.logger.debug("Watermark results: {results}", results=results)
         return results
 
-    @bentoml.api(
-        batchable=True,
-        batch_dim=0,
-        max_batch_size=settings.bentoml.inference.slow_batched_op_max_batch_size,
-        max_latency_ms=settings.bentoml.inference.slow_batched_op_max_latency_ms,
-        input_spec=EmbedRequest,
-        output_spec=EmbedRequest,
-    )
-    async def add_ai_watermark(self, images: list[PILImage]) -> list[PILImage]:
+    async def add_ai_watermark(self, images: list[PILImage.Image]) -> list[PILImage.Image]:
         """Add AI-specific watermarks to a list of images.
 
         :param images: List of PIL images to add AI watermarks to.
-        :type images: List[PILImage]
+        :type images: List[PILImage.Image]
         :returns: List of watermarked PIL images.
-        :rtype: list[PILImage]
+        :rtype: list[PILImage.Image]
         """
         results = list(self.model_ai_watermark(image=images)[0])  # type: ignore[arg-type]
         self.logger.debug("AI watermark results: {results}", results=results)

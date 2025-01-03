@@ -17,15 +17,16 @@ import asyncio
 import hashlib
 import io
 import os
+import traceback
 import uuid
 from functools import lru_cache
-from typing import Any, cast
+from typing import Any
 
 import aiohttp
 import bentoml
 import jwt
 import numpy as np
-from fastapi import FastAPI, UploadFile
+from fastapi import FastAPI, Request, UploadFile
 from jwt.exceptions import InvalidTokenError
 from PIL import Image
 from PIL.Image import Image as PILImage  # noqa: TC002
@@ -45,9 +46,11 @@ from ai_api.model import (
     InferenceServiceProto,
     SearchResponse,
 )
+from ai_api.model.api.embed import EmbedRequest
+from ai_api.model.api.process import ListAddWatermarkRequest
 from ai_api.orm import GalleryEmbedding as ORMGalleryEmbedding
 from ai_api.orm import Image as ORMImage
-from ai_api.services import InferenceService
+#from ai_api.services import InferenceService
 from ai_api.util import get_logger
 
 
@@ -108,14 +111,34 @@ class APIService(APIServiceProto):
 
     def __init__(self) -> None:
         """Initialize the API service with required dependencies."""
-        self.embedding_service: InferenceServiceProto = cast(InferenceServiceProto, bentoml.depends(InferenceService))
+        #self.embedding_service: InferenceServiceProto = InferenceService(worker_index=getattr(bentoml.server_context, "worker_index", 1) - 1)
 
         self.logger = get_logger()
         self.ctx = bentoml.Context()
         self.db_healthy = False
         self.background_tasks: set[asyncio.Task[Any]] = set()
         self.jwt_secret = settings.jwt_secret
-        asyncio.run_coroutine_threadsafe(self._init_postgres(), asyncio.get_event_loop())
+        app.add_exception_handler(exc_class_or_status_code=Exception, handler=self.global_exception_handler)
+        #asyncio.run_coroutine_threadsafe(self._init_postgres(), asyncio.get_event_loop())
+        print("Debugging: ", settings.debug)
+
+    async def global_exception_handler(self, request: Request, exc: Exception) -> JSONResponse:
+        """Global exception handler for the API.
+
+        :param request: The request object.
+        :param exc: The exception raised.
+        :return: A JSONResponse object with the error code and message.
+        """
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error_code": "500",
+                "request_info": request,
+                "error_message": "Internal Server Error",
+                "error_traceback": traceback.format_exc(limit=5),
+                "exception": exc,
+            },
+        )
 
     def _verify_jwt(self, ctx: bentoml.Context) -> None:
         """Verify JWT token from request Authorization header.
@@ -618,6 +641,9 @@ class APIService(APIServiceProto):
         :returns: Dictionary containing health status.
         :rtype: JSONResponse
         """
+        if settings.debug:
+            return JSONResponse(status_code=200, content={"status": "healthy"})
+
         if not self.db_healthy:
             return JSONResponse(status_code=503, content={"status": "unhealthy"})
 
@@ -651,3 +677,139 @@ class APIService(APIServiceProto):
         else:
             return JSONResponse(status_code=200, content={"status": "ready"})
 
+    @bentoml.api(
+        batchable=True,
+        batch_dim=0,
+        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
+        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
+    )
+    async def embed_text(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for a list of text inputs.
+
+        :param texts: List of text strings to embed.
+        :type texts: list[str]
+        :returns: List of normalized embedding vectors.
+        :rtype: list[list[float]]
+        """
+        return await self.embedding_service.embed_text(texts)
+
+    @bentoml.api(
+        batchable=True,
+        batch_dim=0,
+        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
+        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
+        input_spec=EmbedRequest,
+    )
+    async def embed_image(self, images: list[PILImage]) -> list[list[float]]:
+        """Generate embeddings for a list of images.
+
+        :param images: List of PIL images to embed.
+        :type images: List[PILImage]
+        :returns: List of normalized embedding vectors.
+        :rtype: list[list[float]]
+        """
+        return await self.embedding_service.embed_image(images)
+
+    @bentoml.api(
+        batchable=True,
+        batch_dim=0,
+        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
+        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
+        input_spec=EmbedRequest,
+    )
+    async def generate_caption(self, images: list[PILImage]) -> list[str]:
+        """Generate descriptive captions for a list of images.
+
+        :param images: List of PIL images to generate captions for.
+        :type images: List[PILImage]
+        :returns: List of generated caption strings.
+        :rtype: list[str]
+        """
+        return await self.embedding_service.generate_caption(images)
+
+    @bentoml.api(
+        batchable=True,
+        batch_dim=0,
+        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
+        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
+        input_spec=EmbedRequest,
+    )
+    async def detect_ai_generation(self, images: list[PILImage]) -> list[AIGeneratedStatus]:
+        """Detect whether images were generated by AI.
+
+        :param images: List of PIL images to check.
+        :type images: List[PILImage]
+        :returns: List of AI generation status enums.
+        :rtype: list[AIGeneratedStatus]
+        """
+        return await self.embedding_service.detect_ai_generation(images)
+
+    @bentoml.api(
+        batchable=True,
+        batch_dim=0,
+        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
+        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
+        input_spec=EmbedRequest,
+    )
+    async def check_watermark(self, images: list[PILImage]) -> list[tuple[bool, str | None]]:
+        """Check for the presence of watermarks in images.
+
+        :param images: List of PIL images to check for watermarks.
+        :type images: List[PILImage]
+        :returns: List of tuples containing (has_watermark, watermark_text).
+        :rtype: list[tuple[bool, str | None]]
+        """
+        return await self.embedding_service.check_watermark(images)
+
+    @bentoml.api(
+        batchable=True,
+        batch_dim=0,
+        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
+        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
+        input_spec=EmbedRequest,
+    )
+    async def check_ai_watermark(self, images: list[PILImage]) -> list[bool]:
+        """Check for the presence of AI-specific watermarks in images.
+
+        :param images: List of PIL images to check for AI watermarks.
+        :type images: List[PILImage]
+        :returns: List of boolean values indicating AI watermark presence.
+        :rtype: list[bool]
+        """
+        return await self.embedding_service.check_ai_watermark(images)
+
+    @bentoml.api(
+        batchable=True,
+        batch_dim=0,
+        max_batch_size=settings.bentoml.inference.slow_batched_op_max_batch_size,
+        max_latency_ms=settings.bentoml.inference.slow_batched_op_max_latency_ms,
+        input_spec=ListAddWatermarkRequest,
+        output_spec=EmbedRequest,
+    )
+    async def add_watermark(self, request: list[AddWatermarkRequest]) -> list[PILImage]:
+        """Add watermarks to a list of images.
+
+        :param request: List of watermark requests containing images and watermark text.
+        :type request: List[AddWatermarkRequest]
+        :returns: List of watermarked PIL images.
+        :rtype: list[PILImage]
+        """
+        return await self.embedding_service.add_watermark(request)
+
+    @bentoml.api(
+        batchable=True,
+        batch_dim=0,
+        max_batch_size=settings.bentoml.inference.slow_batched_op_max_batch_size,
+        max_latency_ms=settings.bentoml.inference.slow_batched_op_max_latency_ms,
+        input_spec=EmbedRequest,
+        output_spec=EmbedRequest,
+    )
+    async def add_ai_watermark(self, images: list[PILImage]) -> list[PILImage]:
+        """Add AI-specific watermarks to a list of images.
+
+        :param images: List of PIL images to add AI watermarks to.
+        :type images: List[PILImage]
+        :returns: List of watermarked PIL images.
+        :rtype: list[PILImage]
+        """
+        return await self.embedding_service.add_ai_watermark(images)
