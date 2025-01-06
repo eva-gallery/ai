@@ -10,10 +10,10 @@ from PIL.Image import Image as PILImage
 
 class EmbedRequest(IODescriptor):
     """Request model for generating image embeddings.
-    
+
     This class represents a request to generate embeddings for a batch of images,
     which can be used for similarity search and other ML tasks.
-    
+
     :param image: List of images to generate embeddings for.
     :type image: list[PILImage]
     :returns: The embeddings will be generated for each provided image.

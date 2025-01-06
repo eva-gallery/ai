@@ -50,7 +50,7 @@ from ai_api.model.api.embed import EmbedRequest
 from ai_api.model.api.process import ListAddWatermarkRequest
 from ai_api.orm import GalleryEmbedding as ORMGalleryEmbedding
 from ai_api.orm import Image as ORMImage
-#from ai_api.services import InferenceService
+from ai_api.services import InferenceService
 from ai_api.util import get_logger
 
 
@@ -111,7 +111,7 @@ class APIService(APIServiceProto):
 
     def __init__(self) -> None:
         """Initialize the API service with required dependencies."""
-        #self.embedding_service: InferenceServiceProto = InferenceService(worker_index=getattr(bentoml.server_context, "worker_index", 1) - 1)
+        self.embedding_service: InferenceServiceProto = InferenceService(worker_index=getattr(bentoml.server_context, "worker_index", 1) - 1)
 
         self.logger = get_logger()
         self.ctx = bentoml.Context()
@@ -119,8 +119,7 @@ class APIService(APIServiceProto):
         self.background_tasks: set[asyncio.Task[Any]] = set()
         self.jwt_secret = settings.jwt_secret
         app.add_exception_handler(exc_class_or_status_code=Exception, handler=self.global_exception_handler)
-        #asyncio.run_coroutine_threadsafe(self._init_postgres(), asyncio.get_event_loop())
-        print("Debugging: ", settings.debug)
+        asyncio.run_coroutine_threadsafe(self._init_postgres(), asyncio.get_event_loop())
 
     async def global_exception_handler(self, request: Request, exc: Exception) -> JSONResponse:
         """Global exception handler for the API.
