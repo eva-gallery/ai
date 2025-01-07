@@ -8,6 +8,6 @@ This module provides the core service implementations for the AI API, including:
 The services are implemented using BentoML for production-ready ML serving.
 """
 
-from ai_api.services.inference_service import AddWatermarkRequest, InferenceService
+from ai_api.services.inference_service import InferenceService
 
-__all__ = ["AddWatermarkRequest", "InferenceService"]
+__all__ = ["InferenceService"]

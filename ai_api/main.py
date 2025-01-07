@@ -14,29 +14,28 @@ The service provides endpoints for:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import io
 import os
+import traceback
 import uuid
 from functools import lru_cache
-from typing import Any, cast
+from typing import Any
 
 import aiohttp
 import bentoml
 import jwt
-import numpy as np
-from fastapi import FastAPI, UploadFile
+from fastapi import FastAPI, Request, UploadFile
+from fastapi.responses import JSONResponse, Response
+from imagehash import dhash, phash, whash
 from jwt.exceptions import InvalidTokenError
 from PIL import Image
 from PIL.Image import Image as PILImage  # noqa: TC002
 from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
-from starlette.responses import JSONResponse
 
 from ai_api import API_SERVICE_KWARGS, settings
 from ai_api.database import AIOPostgres
 from ai_api.model import (
-    AddWatermarkRequest,
     AIGeneratedStatus,
     APIServiceProto,
     BackendPatchRequest,
@@ -45,10 +44,17 @@ from ai_api.model import (
     InferenceServiceProto,
     SearchResponse,
 )
+from ai_api.model.api.embed import EmbedRequest
 from ai_api.orm import GalleryEmbedding as ORMGalleryEmbedding
 from ai_api.orm import Image as ORMImage
 from ai_api.services import InferenceService
 from ai_api.util import get_logger
+
+hash_method = {
+    "phash": phash,
+    "dhash": dhash,
+    "whash": whash,
+}
 
 
 @lru_cache(maxsize=4096)
@@ -103,19 +109,42 @@ class APIService(APIServiceProto):
         db_healthy: Flag indicating database health status.
         background_tasks: Set of running background tasks.
         jwt_secret: Secret for JWT token validation.
+        hash_fn: Function to generate perceptual hashes.
+        hash_threshold: Threshold for hash similarity comparison.
 
     """
 
     def __init__(self) -> None:
         """Initialize the API service with required dependencies."""
-        self.embedding_service: InferenceServiceProto = cast(InferenceServiceProto, bentoml.depends(InferenceService))
+        self.embedding_service: InferenceServiceProto = InferenceService(worker_index=getattr(bentoml.server_context, "worker_index", 1) - 1)
 
         self.logger = get_logger()
         self.ctx = bentoml.Context()
         self.db_healthy = False
         self.background_tasks: set[asyncio.Task[Any]] = set()
         self.jwt_secret = settings.jwt_secret
+        self.hash_fn = hash_method[settings.model.hash.method]
+        self.hash_threshold = settings.model.hash.threshold
+        app.add_exception_handler(exc_class_or_status_code=Exception, handler=self.global_exception_handler)
         asyncio.run_coroutine_threadsafe(self._init_postgres(), asyncio.get_event_loop())
+
+    async def global_exception_handler(self, request: Request, exc: Exception) -> JSONResponse:
+        """Global exception handler for the API.
+
+        :param request: The request object.
+        :param exc: The exception raised.
+        :return: A JSONResponse object with the error code and message.
+        """
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error_code": "500",
+                "request_info": request,
+                "error_message": "Internal Server Error",
+                "error_traceback": traceback.format_exc(limit=5),
+                "exception": exc,
+            },
+        )
 
     def _verify_jwt(self, ctx: bentoml.Context) -> None:
         """Verify JWT token from request Authorization header.
@@ -258,6 +287,7 @@ class APIService(APIServiceProto):
         artwork_uuid: str,
         ai_generated_status: AIGeneratedStatus,
         metadata: dict[str, Any],
+        modified_image_uuid: str | None = None,
     ) -> None:
         """Process image data including embedding, duplicate checking, and watermarking.
 
@@ -271,49 +301,36 @@ class APIService(APIServiceProto):
         :type metadata: dict[str, Any]
         :raises: May raise exceptions during image processing or database operations.
         """
-        # Generate a shorter hash that will fit in 32 bits
-        original_hash = hashlib.sha256(image_pil.tobytes()).hexdigest()[:8]  # First 32 bits (8 hex chars)
-
+        # Generate perceptual hash
+        image_hash = self.hash_fn(image_pil).hash.tobytes()
         image_embed = (await self.embedding_service.embed_image([image_pil]))[0]
 
         duplicate_status = ImageDuplicateStatus.OK
         most_similar_image_uuid = None
 
         if metadata.get("ignore_duplicate_check", False) in (False, None):
-            # Check for duplicates
-            watermark_result, ai_watermark = await asyncio.gather(
-                self.embedding_service.check_watermark([image_pil]),
-                self.embedding_service.check_ai_watermark([image_pil]),
-            )
-            has_watermark, watermark = watermark_result[0]
-            ai_watermark = ai_watermark[0]
+            # Check for AI watermark
+            ai_watermark = (await self.embedding_service.check_ai_watermark([image_pil]))[0]
 
             if ai_watermark:
                 duplicate_status = ImageDuplicateStatus.PLAGIARIZED
-            elif has_watermark and watermark:
+            else:
                 async with AIOPostgres().session() as conn:
+                    # Find most similar image by perceptual hash
                     result = await conn.execute(
-                        select(ORMImage)
-                        .filter_by(image_hash=watermark),  # Changed from md5_hash to image_hash
+                        select(ORMImage.image_uuid)
+                        .where(ORMImage.public.is_(True))
+                        .order_by(
+                            ORMImage.image_hash.hamming_similarity(image_hash).desc(),
+                        )
+                        .having(ORMImage.image_hash.hamming_similarity(image_hash) > self.hash_threshold)
+                        .limit(1),
                     )
-                    if result.scalar_one_or_none():
-                        result = await conn.execute(
-                            select(ORMGalleryEmbedding.image_embedding, ORMGalleryEmbedding.image_id)
-                            .order_by(ORMGalleryEmbedding.image_embedding_distance_to(image_embed)),
-                        )
 
-                        float_vec, image_id = (await (await result.scalars()).one())  # type: ignore[misc]
-
-                        result = await conn.execute(
-                            select(ORMImage.image_uuid)
-                            .where(ORMImage.id == image_id),
-                        )
-
-                        most_similar_image_uuid = await (await result.scalars()).one()  # type: ignore[misc]
-
-                        # check if dot product is more than 95% similar
-                        if np.dot(image_embed, float_vec) > settings.model.detection.threshold:
-                            duplicate_status = ImageDuplicateStatus.EXISTS
+                    most_similar = await result.scalar_one_or_none()
+                    if most_similar:
+                        duplicate_status = ImageDuplicateStatus.EXISTS
+                        most_similar_image_uuid = most_similar
 
         if duplicate_status is not ImageDuplicateStatus.OK:
             await self._save_and_notify(
@@ -324,7 +341,7 @@ class APIService(APIServiceProto):
                     original_image_uuid=artwork_uuid,
                     generated_status=ai_generated_status,
                     image_metadata=metadata,
-                    image_hash=original_hash,
+                    image_hash=image_hash,
                 ),
                 gallery_embedding_model=ORMGalleryEmbedding(
                     image_embedding=image_embed,
@@ -351,11 +368,8 @@ class APIService(APIServiceProto):
         if ai_generated_status == AIGeneratedStatus.NOT_GENERATED:
             ai_generated_status = (await self.embedding_service.detect_ai_generation([image_pil]))[0]
             if ai_generated_status == AIGeneratedStatus.NOT_GENERATED:
-                watermarked_image_pil = (await self.embedding_service.add_ai_watermark([image_pil]))[0]
+                watermarked_image_pil = (await self.embedding_service.add_ai_watermark([image_pil], prompts=[generated_image_caption]))[0]
 
-        watermarked_image_pil: PILImage = (await self.embedding_service.add_watermark([
-            AddWatermarkRequest(image=watermarked_image_pil, watermark_text=original_hash),
-        ]))[0]
         watermarked_image_embed, generated_caption_embed = await asyncio.gather(
             self.embedding_service.embed_image([watermarked_image_pil]),
             self.embedding_service.embed_text([generated_image_caption]),
@@ -373,15 +387,22 @@ class APIService(APIServiceProto):
 
         self.ctx.state["queued_processing"] -= 1
 
+        metadata["ignore_duplicate_check"] = False
+
+        orm_image_kwargs = {
+            "original_image_uuid": artwork_uuid,
+            "image_metadata": metadata,
+            "image_hash": image_hash,
+        }
+
+        if modified_image_uuid:
+            orm_image_kwargs["image_uuid"] = modified_image_uuid
+
         # Save to database and send to backend
         await self._save_and_notify(
             duplicate_status=duplicate_status,
             image_pil=watermarked_image_pil,
-            image_model=ORMImage(
-                original_image_id=artwork_uuid,
-                image_metadata=metadata,
-                image_hash=original_hash,
-            ),
+            image_model=ORMImage(**orm_image_kwargs),
             gallery_embedding_model=ORMGalleryEmbedding(
                 image_embedding=image_embed,
                 watermarked_image_embedding=watermarked_image_embed,
@@ -567,6 +588,76 @@ class APIService(APIServiceProto):
 
         return JSONResponse(status_code=200, content={})
 
+    @app.get(path="/image/exists")
+    async def image_exists(self, image_uuid: str) -> Response:
+        """Check if an image exists in the database."""
+        async with AIOPostgres() as conn:
+            result = await conn.execute(select(ORMImage.image_uuid).where(ORMImage.image_uuid == image_uuid))
+        return Response(status_code=200 if result.scalar_one_or_none() is not None else 404)
+
+    @app.get(path="/image/needs-reprocessing")
+    async def image_needs_reprocessing(self, image_uuid: str) -> Response:
+        """Check if an image needs reprocessing.
+
+        :param image_uuid: UUID of the image to check.
+        :type image_uuid: str
+        :returns: Response with 200 if image needs reprocessing (hash is null), 404 if not found.
+        :rtype: Response
+        """
+        async with AIOPostgres() as conn:
+            result = await conn.execute(
+                select(ORMImage.image_uuid)
+                .where(
+                    ORMImage.image_uuid == image_uuid,
+                    ORMImage.image_hash.is_(None),
+                ),
+            )
+        return Response(status_code=200 if result.scalar_one_or_none() is not None else 404)
+
+    @bentoml.api(
+        route="/image/reprocess",
+    )
+    async def reprocess_image(
+        self,
+        image: PILImage,
+        image_uuid: str,
+        metadata: dict[str, Any],
+        modified_image_uuid: str,
+        ctx: bentoml.Context,
+    ) -> None:
+        """Reprocess an image for storage and analysis.
+
+        :param image: Image data to process.
+        :type image: PILImage
+        :param image_uuid: UUID for the image.
+        :type image_uuid: str
+        :param modified_image_uuid: UUID for the modified image.
+        :type modified_image_uuid: str
+        :param ctx: BentoML request context.
+        :type ctx: bentoml.Context
+        :raises ValueError: If JWT token is invalid.
+        """
+        self._verify_jwt(ctx)
+
+        image_pil = image.convert("RGB")
+        if ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
+            ctx.response.status_code = 503
+            return
+
+        task = asyncio.create_task(self._process_image_data(
+            image_pil=image_pil,
+            artwork_uuid=image_uuid,
+            ai_generated_status=AIGeneratedStatus.GENERATED_PROTECTED,
+            metadata=metadata,
+            modified_image_uuid=modified_image_uuid,
+        ))
+
+        self.background_tasks.add(task)
+        task.add_done_callback(self.background_tasks.discard)
+
+        self.ctx.state["queued_processing"] = self.ctx.state.get("queued_processing", 0) + 1
+        ctx.response.status_code = 201
+
     @bentoml.api(
         route="/image/process",
     )
@@ -611,31 +702,31 @@ class APIService(APIServiceProto):
         ctx.state["queued_processing"] = ctx.state.get("queued_processing", 0) + 1
         ctx.response.status_code = 201
 
-    @app.get(path="/healthz", response_model=dict[str, str])
-    async def healthz(self) -> dict[str, str]:
+    @app.get(path="/healthz")
+    async def healthz(self) -> JSONResponse:
         """Check service health status.
 
         :returns: Dictionary containing health status.
-        :rtype: dict[str, str]
+        :rtype: JSONResponse
         """
+        if settings.debug:
+            return JSONResponse(status_code=200, content={"status": "healthy"})
+
         if not self.db_healthy:
-            self.ctx.response.status_code = 503
-            return {"status": "unhealthy"}
+            return JSONResponse(status_code=503, content={"status": "unhealthy"})
 
-        self.ctx.response.status_code = 200
-        return {"status": "healthy"}
+        return JSONResponse(status_code=200, content={"status": "healthy"})
 
-    @app.get(path="/readyz", response_model=dict[str, str])
-    async def readyz(self) -> dict[str, str]:
+    @app.get(path="/readyz")
+    async def readyz(self) -> JSONResponse:
         """Check if service is ready to handle requests.
 
         :returns: Dictionary containing readiness status.
-        :rtype: dict[str, str]
+        :rtype: JSONResponse
         :raises Exception: If readiness check fails.
         """
         if self.ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
-            self.ctx.response.status_code = 503
-            return {"status": "not ready"}
+            return JSONResponse(status_code=503, content={"status": "not ready"})
 
         try:
             # Test database connection
@@ -650,8 +741,108 @@ class APIService(APIServiceProto):
                 raise
         except Exception as e:
             self.logger.exception("Readiness check failed: {e}", e=e)
-            self.ctx.response.status_code = 503
             raise
         else:
-            self.ctx.response.status_code = 200
-            return {"status": "ready"}
+            return JSONResponse(status_code=200, content={"status": "ready"})
+
+    @bentoml.api(
+        batchable=True,
+        batch_dim=0,
+        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
+        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
+    )
+    async def embed_text(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for a list of text inputs.
+
+        :param texts: List of text strings to embed.
+        :type texts: list[str]
+        :returns: List of normalized embedding vectors.
+        :rtype: list[list[float]]
+        """
+        return await self.embedding_service.embed_text(texts)
+
+    @bentoml.api(
+        batchable=True,
+        batch_dim=0,
+        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
+        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
+        input_spec=EmbedRequest,
+    )
+    async def embed_image(self, images: list[PILImage]) -> list[list[float]]:
+        """Generate embeddings for a list of images.
+
+        :param images: List of PIL images to embed.
+        :type images: List[PILImage]
+        :returns: List of normalized embedding vectors.
+        :rtype: list[list[float]]
+        """
+        return await self.embedding_service.embed_image(images)
+
+    @bentoml.api(
+        batchable=True,
+        batch_dim=0,
+        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
+        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
+        input_spec=EmbedRequest,
+    )
+    async def generate_caption(self, images: list[PILImage]) -> list[str]:
+        """Generate descriptive captions for a list of images.
+
+        :param images: List of PIL images to generate captions for.
+        :type images: List[PILImage]
+        :returns: List of generated caption strings.
+        :rtype: list[str]
+        """
+        return await self.embedding_service.generate_caption(images)
+
+    @bentoml.api(
+        batchable=True,
+        batch_dim=0,
+        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
+        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
+        input_spec=EmbedRequest,
+    )
+    async def detect_ai_generation(self, images: list[PILImage]) -> list[AIGeneratedStatus]:
+        """Detect whether images were generated by AI.
+
+        :param images: List of PIL images to check.
+        :type images: List[PILImage]
+        :returns: List of AI generation status enums.
+        :rtype: list[AIGeneratedStatus]
+        """
+        return await self.embedding_service.detect_ai_generation(images)
+
+    @bentoml.api(
+        batchable=True,
+        batch_dim=0,
+        max_batch_size=settings.bentoml.inference.fast_batched_op_max_batch_size,
+        max_latency_ms=settings.bentoml.inference.fast_batched_op_max_latency_ms,
+        input_spec=EmbedRequest,
+    )
+    async def check_ai_watermark(self, images: list[PILImage]) -> list[bool]:
+        """Check for the presence of AI-specific watermarks in images.
+
+        :param images: List of PIL images to check for AI watermarks.
+        :type images: list[PILImage]
+        :returns: List of boolean values indicating AI watermark presence.
+        :rtype: list[bool]
+        """
+        return await self.embedding_service.check_ai_watermark(images)
+
+    @bentoml.api(
+        batchable=True,
+        batch_dim=0,
+        max_batch_size=settings.bentoml.inference.slow_batched_op_max_batch_size,
+        max_latency_ms=settings.bentoml.inference.slow_batched_op_max_latency_ms,
+        input_spec=EmbedRequest,
+        output_spec=EmbedRequest,
+    )
+    async def add_ai_watermark(self, images: list[PILImage], prompts: list[str]) -> list[PILImage]:
+        """Add AI-specific watermarks to a list of images.
+
+        :param images: List of PIL images to add AI watermarks to.
+        :type images: List[PILImage]
+        :returns: List of watermarked PIL images.
+        :rtype: list[PILImage]
+        """
+        return await self.embedding_service.add_ai_watermark(images, prompts=prompts)
