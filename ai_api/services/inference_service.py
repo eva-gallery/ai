@@ -223,7 +223,7 @@ class InferenceService(InferenceServiceProto):
         ai_watermark_t = self.model_ai_watermark_processor(images, return_tensors="pt").to(self.model_ai_watermark_decoder.device)
         logits = self.model_ai_watermark_decoder(**ai_watermark_t).logits.detach().cpu().numpy()[:, 0]  # type: ignore[arg-type]
         is_watermarked = logits < settings.model.watermark.threshold
-        print(logits)
+
         return is_watermarked.tolist()
 
     async def add_ai_watermark(self, images: list[PILImage.Image], prompts: list[str]) -> list[PILImage.Image]:
