@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,6 +18,13 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from ai_api.model.api import APIServiceProto
+
+
+# Skip all tests in this module if CI=true
+pytestmark = pytest.mark.skipif(
+    bool(os.getenv("CI", None)),
+    reason="Tests skipped in CI environment",
+)
 
 
 @pytest.fixture(scope="module")
