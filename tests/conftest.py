@@ -8,6 +8,7 @@ from typing import Generator, Any
 from unittest.mock import Mock, patch
 
 import pytest
+import dotenv
 import numpy as np
 import numpy.typing as npt
 from PIL import Image
@@ -17,6 +18,8 @@ from io import BytesIO
 # Set environment before any tests run
 os.environ["ENV_FOR_DYNACONF"] = "testing"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "true"
+
+dotenv.load_dotenv()
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_env() -> Generator[None, None, None]:

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 # Skip all tests in this module if CI=true
 pytestmark = pytest.mark.skipif(
-    bool(os.getenv("CI", None)),
+    bool(os.getenv("CI", None) and not os.getenv("LOCAL", None)),
     reason="Tests skipped in CI environment",
 )
 
@@ -82,6 +82,26 @@ async def test_detect_ai_generation_not_generated(service: InferenceServiceProto
     images = [sample_image]
     result = (await service.detect_ai_generation(images))[0]
     assert result in AIGeneratedStatus, f"Expected {AIGeneratedStatus} but got {result}"
+
+
+@pytest.mark.asyncio
+async def test_detect_ai_generation_generated(service: InferenceServiceProto, sample_image: PILImage.Image) -> None:
+    """Test AI generation detection for AI-generated images.
+    
+    This test verifies that images with AI watermarks are correctly detected
+    as AI-generated content.
+    
+    :param service: The inference service instance.
+    :param sample_image: Sample test image.
+    """
+    # First, create an "AI-generated" image by adding a watermark
+    images = [sample_image]
+    prompts = await service.generate_caption(images)
+    watermarked_image = (await service.add_ai_watermark(images, prompts))[0]
+    
+    # Test detection on the watermarked image
+    result = (await service.detect_ai_generation([watermarked_image]))[0]
+    assert result == AIGeneratedStatus.GENERATED, f"Expected {AIGeneratedStatus.GENERATED} but got {result}"
 
 
 @pytest.mark.asyncio

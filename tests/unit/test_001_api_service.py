@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 # Skip all tests in this module if CI=true
 pytestmark = pytest.mark.skipif(
-    bool(os.getenv("CI", None)),
+    bool(os.getenv("CI", None) and not os.getenv("LOCAL", None)),
     reason="Tests skipped in CI environment",
 )
 

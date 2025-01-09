@@ -25,10 +25,11 @@ default:
       decoder_name: "imatag/stable-signature-bzh-detector-resnet18"
       threshold: 15
       strength: 0.05
-      interleave_ratio: 0.4
+      interleave_ratio: 0.5
       guidance_scale: 0.05
       num_inference_steps: 25
       gamma: 0
+      resolution_longest_size: 1024
     hash:
       method: "phash"  # one of phash, dhash, whash
       threshold: 0.90
