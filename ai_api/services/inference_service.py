@@ -115,7 +115,7 @@ class InferenceService(InferenceServiceProto):
         # Initialize BLIP captioning model and processor
         self.caption_processor: BlipProcessor = cast(
             BlipProcessor,
-            BlipProcessor.from_pretrained(settings.model.captioning.name, cache_dir=settings.model.cache_dir, device=self.device),
+            BlipProcessor.from_pretrained(settings.model.captioning.name, cache_dir=settings.model.cache_dir, device=self.device, torch_dtype=torch.float16),
         )
         self.caption_model: BlipForConditionalGeneration = BlipForConditionalGeneration.from_pretrained(settings.model.captioning.name, cache_dir=settings.model.cache_dir)
 
@@ -125,16 +125,19 @@ class InferenceService(InferenceServiceProto):
             device_map=self.device_map_string,
             lu_lambdas=True,
             add_watermarker=True,
+            torch_dtype=torch.float16,
         ))
         self.model_ai_watermark_decoder = AutoModelForImageClassification.from_pretrained(
             settings.model.watermark.decoder_name,
             device_map=self.device_map_string,
             cache_dir=settings.model.cache_dir,
+            torch_dtype=torch.float16,
         )
         self.model_ai_watermark_processor: BlipImageProcessor = BlipImageProcessor.from_pretrained(
             settings.model.watermark.decoder_name,
             cache_dir=settings.model.cache_dir,
             device_map=self.device_map_string,
+            torch_dtype=torch.float16,
         )
 
         self.model_img.eval()
@@ -289,7 +292,7 @@ class InferenceService(InferenceServiceProto):
         for bin_image_grp in resolution_bins:
             indices, bin_images = zip(*bin_image_grp, strict=True)
 
-            ai_watermark_t = self.model_ai_watermark_processor(bin_images, return_tensors="pt").to(self.model_ai_watermark_decoder.device)
+            ai_watermark_t = self.model_ai_watermark_processor(bin_images, return_tensors="pt").to(self.model_ai_watermark_decoder.device, dtype=torch.float16)
             logits = self.model_ai_watermark_decoder(**ai_watermark_t).logits.detach().cpu().numpy()[:, 0]  # type: ignore[arg-type]
             is_watermarked = logits < settings.model.watermark.threshold
 
