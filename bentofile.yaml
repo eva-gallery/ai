@@ -23,6 +23,7 @@ python:
     - diffusers<1.0.0
     - dynaconf<4.0.0
     - PyJWT<3.0.0
+    - invisible-watermark<1.0.0
     - transformers<5.0.0
     - tornado>=6.4.2,<7.0.0
     - asyncpg<1.0.0

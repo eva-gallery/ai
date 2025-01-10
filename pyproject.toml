@@ -21,6 +21,7 @@ tornado = ">=6.4.2,6.*"
 asyncpg = "0.*"
 sqlalchemy = "2.*"
 python-multipart = ">=0.0.18,0.*"
+invisible-watermark = ">=0.2.0,0.*"
 torch = { version = "2.*", source = "pytorch-gpu" }
 torchvision = { version = "0.*", source = "pytorch-gpu" }
 numpy = "2.*"
