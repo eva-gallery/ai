@@ -57,38 +57,8 @@ hash_method = {
 }
 
 
-@lru_cache(maxsize=4096)
-async def _get_and_cache_query_embeddings(query: str, embedding_service: InferenceServiceProto) -> tuple[float, ...]:
-    """Get and cache text query embeddings.
-
-    :param query: Text query to embed.
-    :type query: str
-    :param embedding_service: Service to generate embeddings.
-    :type embedding_service: InferenceServiceProto
-    :returns: Tuple of embedding values.
-    :rtype: tuple[float, ...]
-    """
-    return tuple((await embedding_service.embed_text([query]))[0])
-
-
-@lru_cache(maxsize=4096)
-async def _search_image_id_cache(image_id: int) -> tuple[float] | None:
-    """Get cached image embeddings by ID.
-
-    :param image_id: Database ID of the image.
-    :type image_id: int
-    :returns: Tuple of embedding values if found.
-    :rtype: tuple[float] | None
-    """
-    async with AIOPostgres() as conn:
-        # First get the embedding for the input image_id
-        embedding_stmt = select(ORMGalleryEmbedding).where(ORMGalleryEmbedding.image_id == image_id)
-        embedding_result = await conn.execute(embedding_stmt)
-        embedding = await embedding_result.scalar_one_or_none()  # type: ignore[misc]
-        return tuple(embedding.image_embedding) if embedding else None
-
-
 app = FastAPI()
+logger = get_logger()
 
 
 @bentoml.service(
@@ -118,7 +88,7 @@ class APIService(APIServiceProto):
         """Initialize the API service with required dependencies."""
         self.embedding_service: InferenceServiceProto = InferenceService(worker_index=getattr(bentoml.server_context, "worker_index", 1) - 1)
 
-        self.logger = get_logger()
+        self.logger = logger
         self.ctx = bentoml.Context()
         self.db_healthy = False
         self.background_tasks: set[asyncio.Task[Any]] = set()
@@ -127,6 +97,41 @@ class APIService(APIServiceProto):
         self.hash_threshold = settings.model.hash.threshold
         app.add_exception_handler(exc_class_or_status_code=Exception, handler=self.global_exception_handler)
         asyncio.run_coroutine_threadsafe(self._init_postgres(), asyncio.get_event_loop())
+
+    @lru_cache(maxsize=4096)
+    @staticmethod
+    async def _get_and_cache_query_embeddings(query: str, embedding_service: InferenceServiceProto) -> tuple[float, ...]:
+        """Get and cache text query embeddings.
+
+        :param query: Text query to embed.
+        :type query: str
+        :param embedding_service: Service to generate embeddings.
+        :type embedding_service: InferenceServiceProto
+        :returns: Tuple of embedding values.
+        :rtype: tuple[float, ...]
+        """
+        return tuple((await embedding_service.embed_text([query]))[0])
+
+    @lru_cache(maxsize=4096)
+    @staticmethod
+    async def _search_image_id_cache(image_id: int) -> tuple[float] | None:
+        """Get cached image embeddings by ID.
+
+        :param image_id: Database ID of the image.
+        :type image_id: int
+        :returns: Tuple of embedding values if found.
+        :rtype: tuple[float] | None
+        """
+        try:
+            async with AIOPostgres().session() as conn:
+                # First get the embedding for the input image_id
+                embedding_stmt = select(ORMGalleryEmbedding).where(ORMGalleryEmbedding.image_id == image_id)
+                embedding_result = await conn.execute(embedding_stmt)
+                embedding = embedding_result.scalar_one_or_none()
+                return tuple(embedding.image_embedding) if embedding else None
+        except Exception as e:
+            logger.exception("Failed to search for image embeddings: {e}", e=e)
+            return None
 
     async def global_exception_handler(self, request: Request, exc: Exception) -> JSONResponse:
         """Global exception handler for the API.
@@ -327,7 +332,7 @@ class APIService(APIServiceProto):
                         .limit(1),
                     )
 
-                    most_similar = await result.scalar_one_or_none()
+                    most_similar = result.scalar_one_or_none()
                     if most_similar:
                         duplicate_status = ImageDuplicateStatus.EXISTS
                         most_similar_image_uuid = most_similar
@@ -427,21 +432,27 @@ class APIService(APIServiceProto):
         :raises ValueError: If JWT token is invalid.
         """
         self._verify_jwt(self.ctx)
-        embedded_text: tuple[float, ...] = await _get_and_cache_query_embeddings(
+        embedded_text: tuple[float, ...] = await self._get_and_cache_query_embeddings(
             query,
             self.embedding_service,
         )
 
-        async with AIOPostgres() as conn:
-            stmt = (
-                select(ORMGalleryEmbedding.image_id)
-                .order_by(ORMGalleryEmbedding.image_embedding_distance_to(embedded_text))
-                .limit(count)
-                .offset(page * count)
-            )
+        self.logger.debug("Got embeddings")
 
-            result = await conn.execute(stmt)
-            results = await (await result.scalars()).all()  # type: ignore[misc]
+        try:
+            async with AIOPostgres().session() as conn:
+                stmt = (
+                    select(ORMGalleryEmbedding.image_id)
+                    .order_by(ORMGalleryEmbedding.image_embedding_distance_to(embedded_text))
+                    .limit(count)
+                    .offset(page * count)
+                )
+
+                result = await conn.execute(stmt)
+                results = result.scalars().all()
+        except Exception as e:
+            self.logger.exception("Failed to search for images: {e}", e=e)
+            results = []
 
         return SearchResponse(image_uuid=list(results))
 
@@ -461,34 +472,38 @@ class APIService(APIServiceProto):
         """
         self._verify_jwt(self.ctx)
         image_uuid_obj: uuid.UUID = uuid.UUID(image_uuid)
-        async with AIOPostgres() as conn:
-            # First get the image ID from the UUID
-            image_id_stmt = select(ORMImage.id).where(ORMImage.image_uuid == image_uuid_obj, ORMImage.public.is_(True))
-            image_id_result = await conn.execute(image_id_stmt)
-            image_id = await image_id_result.scalar_one_or_none()  # type: ignore[misc]
+        try:
+            async with AIOPostgres().session() as conn:
+                # First get the image ID from the UUID
+                image_id_stmt = select(ORMImage.id).where(ORMImage.image_uuid == image_uuid_obj, ORMImage.public.is_(True))
+                image_id_result = await conn.execute(image_id_stmt)
+                image_id = image_id_result.scalar_one_or_none()
 
-            if image_id is None:
-                self.ctx.response.status_code = 404
-                return ImageSearchResponse(image_uuid=[])
+                if image_id is None:
+                    self.ctx.response.status_code = 404
+                    return ImageSearchResponse(image_uuid=[])
 
-            # Get the embedding for this image ID
-            embedding = await _search_image_id_cache(image_id)
-            if embedding is None:
-                self.ctx.response.status_code = 404
-                return ImageSearchResponse(image_uuid=[])
+                # Get the embedding for this image ID
+                embedding = await self._search_image_id_cache(image_id)
+                if embedding is None:
+                    self.ctx.response.status_code = 404
+                    return ImageSearchResponse(image_uuid=[])
 
-            # Get similar images, excluding the input image
-            stmt = (
-                select(ORMImage.image_uuid)
-                .join(ORMGalleryEmbedding, ORMGalleryEmbedding.image_id == ORMImage.id)
-                .where(ORMImage.id != image_id)
-                .order_by(ORMGalleryEmbedding.image_embedding_distance_to(embedding))
-                .limit(count)
-                .offset(page * count)
-            )
+                # Get similar images, excluding the input image
+                stmt = (
+                    select(ORMImage.image_uuid)
+                    .join(ORMGalleryEmbedding, ORMGalleryEmbedding.image_id == ORMImage.id)
+                    .where(ORMImage.id != image_id)
+                    .order_by(ORMGalleryEmbedding.image_embedding_distance_to(embedding))
+                    .limit(count)
+                    .offset(page * count)
+                )
 
-            result = await conn.execute(stmt)
-            results = await (await result.scalars()).all()  # type: ignore[misc]
+                result = await conn.execute(stmt)
+                results = result.scalars().all()
+        except Exception as e:
+            self.logger.exception("Failed to search for images: {e}", e=e)
+            results = []
 
         return ImageSearchResponse(image_uuid=list(results))
 
@@ -526,16 +541,20 @@ class APIService(APIServiceProto):
 
         self.ctx.state["queued_processing"] -= 1
 
-        async with AIOPostgres() as conn:
-            stmt = (
-                select(ORMGalleryEmbedding.image_id)
-                .order_by(ORMGalleryEmbedding.image_embedding_distance_to(image_embed))
-                .limit(count)
-                .offset(page * count)
-            )
+        try:
+            async with AIOPostgres().session() as conn:
+                stmt = (
+                    select(ORMGalleryEmbedding.image_id)
+                    .order_by(ORMGalleryEmbedding.image_embedding_distance_to(image_embed))
+                    .limit(count)
+                    .offset(page * count)
+                )
 
-            result = await conn.execute(stmt)
-            results = await (await result.scalars()).all()  # type: ignore[misc]
+                result = await conn.execute(stmt)
+                results = result.scalars().all()
+        except Exception as e:
+            self.logger.exception("Failed to search for images: {e}", e=e)
+            results = []
 
         return ImageSearchResponse(image_uuid=list(results))  # type: ignore[misc]
 
@@ -591,7 +610,7 @@ class APIService(APIServiceProto):
     @app.get(path="/image/exists")
     async def image_exists(self, image_uuid: str) -> Response:
         """Check if an image exists in the database."""
-        async with AIOPostgres() as conn:
+        async with AIOPostgres().session() as conn:
             result = await conn.execute(select(ORMImage.image_uuid).where(ORMImage.image_uuid == image_uuid))
         return Response(status_code=200 if result.scalar_one_or_none() is not None else 404)
 
@@ -604,7 +623,7 @@ class APIService(APIServiceProto):
         :returns: Response with 200 if image needs reprocessing (hash is null), 404 if not found.
         :rtype: Response
         """
-        async with AIOPostgres() as conn:
+        async with AIOPostgres().session() as conn:
             result = await conn.execute(
                 select(ORMImage.image_uuid)
                 .where(

@@ -166,9 +166,7 @@ class InferenceService(InferenceServiceProto):
         :returns: List of normalized embedding vectors.
         :rtype: list[list[float]]
         """
-        results = [result.tolist() for result in self.model_text.encode(texts, normalize_embeddings=True)]
-        self.logger.debug("Text embedding results: {results}", results=results)
-        return results
+        return [result.tolist() for result in self.model_text.encode(texts, normalize_embeddings=True)]
 
     async def embed_image(self, images: list[PILImage.Image]) -> list[list[float]]:
         """Generate embeddings for a list of images.

@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import InvalidRequestError, SQLAlchemyError
@@ -341,23 +341,28 @@ class Postgres(PostgresBase):
 
 
 class MockAIOPostgres:
+    """Mock AIOPostgres class for CI environment."""
 
     def __init__(self, *_: Any, **__: Any) -> None:
-        pass
+        """Initialize the mock AIOPostgres class."""
 
-    async def __aenter__(self) -> MockAIOPostgres:
+    async def __aenter__(self) -> Self:
+        """Enter the mock AIOPostgres context."""
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
-        pass
+        """Exit the mock AIOPostgres context."""
 
-    def __await__(self):
+    def __await__(self) -> Self:
+        """Return the mock AIOPostgres context."""
         return self
 
-    async def session(self):
+    async def session(self) -> Self:
+        """Return the mock AIOPostgres context."""
         return self
 
-    def __getattribute__(self, name: str):
+    def __getattribute__(self, name: str) -> Self | Any:
+        """Get attribute with CI environment handling."""
         if name in ("__aenter__", "__aexit__", "__await__", "session"):
             return super().__getattribute__(name)
         return self
