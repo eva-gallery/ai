@@ -21,9 +21,9 @@ RUN apt-get install -y libgl1 ffmpeg libsm6 libxext6 python3-opencv || true
 
 {{ super() }}
 
-{% endblock %}
-
 # Unset environment variables after setup
 ENV EVA_AI_MODEL__CACHE_DIR=
 ENV EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=
 ENV CI=
+
+{% endblock %}
