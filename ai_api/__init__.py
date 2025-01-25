@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from urllib.parse import quote_plus
 import torch.serialization
 from dynaconf import Dynaconf
 from sentence_transformers.models import Dense
@@ -53,6 +54,8 @@ settings = Dynaconf(
     env=os.getenv("ENV_FOR_DYNACONF", "testing"),
     loaders=["dynaconf.loaders.env_loader", "dynaconf.loaders.yaml_loader"],
 )
+
+settings.postgres.password = quote_plus(settings.postgres.password)
 
 if os.getenv("HF_HOME") is None:
     os.environ["HF_HOME"] = settings.model.cache_dir or str(Path.cwd() / "cache")
