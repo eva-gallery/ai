@@ -76,7 +76,6 @@ class APIService(APIServiceProto):
         embedding_service: Service for generating embeddings and AI operations.
         logger: Logger instance for service logging.
         ctx: BentoML context for request handling.
-        db_healthy: Flag indicating database health status.
         background_tasks: Set of running background tasks.
         jwt_secret: Secret for JWT token validation.
         hash_fn: Function to generate perceptual hashes.
@@ -88,38 +87,26 @@ class APIService(APIServiceProto):
         """Initialize the API service with required dependencies."""
         self.logger = logger
         self.ctx = bentoml.Context()
-        self.db_healthy = False
         self.background_tasks: set[asyncio.Task[Any]] = set()
         self.jwt_secret = settings.jwt_secret
         self.hash_fn = hash_method[settings.model.hash.method]
         self.hash_threshold = settings.model.hash.threshold
-        self.embedding_service: InferenceServiceProto = None # type: ignore[]
+        self.embedding_service: InferenceServiceProto = None  # type: ignore[]
 
         app.add_exception_handler(exc_class_or_status_code=Exception, handler=self.global_exception_handler)
 
-        # Create initialization tasks
-        loop = asyncio.get_event_loop()
-        db_task = loop.create_task(self._init_postgres())
-        embedding_task = loop.create_task(self._init_embedding_service())
-
-        # Store tasks and add callbacks
-        self.background_tasks.add(db_task)
-        self.background_tasks.add(embedding_task)
-        db_task.add_done_callback(lambda t: self._set_db_status(t))
-        embedding_task.add_done_callback(lambda t: self._set_embedding_service(t))
-
-    def _set_db_status(self, task: asyncio.Task[None]) -> None:
-        """Set database health status from task result.
-
-        :param task: Completed database initialization task.
-        """
+        # Initialize postgres synchronously
         try:
-            task.result()
-            self.db_healthy = True
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(self._init_postgres())
         except Exception as e:
             self.logger.exception("Database initialization failed: {e}", e=e)
-        finally:
-            self.background_tasks.discard(task)
+            raise
+
+        # Only start embedding service task after successful DB init
+        embedding_task = loop.create_task(self._init_embedding_service())
+        self.background_tasks.add(embedding_task)
+        embedding_task.add_done_callback(lambda t: self._set_embedding_service(t))
 
     def _set_embedding_service(self, task: asyncio.Task[InferenceServiceProto]) -> None:
         """Set embedding service from task result.
@@ -773,7 +760,10 @@ class APIService(APIServiceProto):
         if settings.debug:
             return JSONResponse(status_code=200, content={"status": "healthy"})
 
-        if not self.db_healthy:
+        try:
+            async with AIOPostgres().session() as conn:
+                await conn.execute(select(1))
+        except SQLAlchemyError:
             return JSONResponse(status_code=503, content={"status": "unhealthy", "reason": "database not healthy"})
 
         return JSONResponse(status_code=200, content={"status": "healthy"})
@@ -788,7 +778,10 @@ class APIService(APIServiceProto):
         if self.ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
             return JSONResponse(status_code=503, content={"status": "not ready", "reason": "queue full"})
 
-        if not self.db_healthy:
+        try:
+            async with AIOPostgres().session() as conn:
+                await conn.execute(select(1))
+        except SQLAlchemyError:
             return JSONResponse(status_code=503, content={"status": "not ready", "reason": "database not ready"})
 
         if self.embedding_service is None: # type: ignore[]
