@@ -97,14 +97,14 @@ class APIService(APIServiceProto):
 
         # Initialize postgres synchronously
         try:
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(self._init_postgres())
+            futures = asyncio.run_coroutine_threadsafe(self._init_postgres(), loop=asyncio.get_event_loop())
+            futures.result(timeout=30)
         except Exception as e:
             self.logger.exception("Database initialization failed: {e}", e=e)
             raise
 
         # Only start embedding service task after successful DB init
-        embedding_task = loop.create_task(self._init_embedding_service())
+        embedding_task = asyncio.create_task(self._init_embedding_service())
         self.background_tasks.add(embedding_task)
         embedding_task.add_done_callback(lambda t: self._set_embedding_service(t))
 
