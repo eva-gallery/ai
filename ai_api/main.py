@@ -86,8 +86,6 @@ class APIService(APIServiceProto):
 
     def __init__(self) -> None:
         """Initialize the API service with required dependencies."""
-        self.embedding_service: InferenceServiceProto = InferenceService(worker_index=getattr(bentoml.server_context, "worker_index", 1) - 1)
-
         self.logger = logger
         self.ctx = bentoml.Context()
         self.db_healthy = False
@@ -95,8 +93,65 @@ class APIService(APIServiceProto):
         self.jwt_secret = settings.jwt_secret
         self.hash_fn = hash_method[settings.model.hash.method]
         self.hash_threshold = settings.model.hash.threshold
+        self.embedding_service: InferenceServiceProto = None # type: ignore[]
+
         app.add_exception_handler(exc_class_or_status_code=Exception, handler=self.global_exception_handler)
-        asyncio.run_coroutine_threadsafe(self._init_postgres(), asyncio.get_event_loop())
+
+        # Create initialization tasks
+        loop = asyncio.get_event_loop()
+        db_task = loop.create_task(self._init_postgres())
+        embedding_task = loop.create_task(self._init_embedding_service())
+
+        # Store tasks and add callbacks
+        self.background_tasks.add(db_task)
+        self.background_tasks.add(embedding_task)
+        db_task.add_done_callback(lambda t: self._set_db_status(t))
+        embedding_task.add_done_callback(lambda t: self._set_embedding_service(t))
+
+    def _set_db_status(self, task: asyncio.Task[None]) -> None:
+        """Set database health status from task result.
+
+        :param task: Completed database initialization task.
+        """
+        try:
+            task.result()
+            self.db_healthy = True
+        except Exception as e:
+            self.logger.exception("Database initialization failed: {e}", e=e)
+        finally:
+            self.background_tasks.discard(task)
+
+    def _set_embedding_service(self, task: asyncio.Task[InferenceServiceProto]) -> None:
+        """Set embedding service from task result.
+
+        :param task: Completed embedding service initialization task.
+        """
+        try:
+            self.embedding_service = task.result()
+        except Exception as e:
+            self.logger.exception("Embedding service initialization failed: {e}", e=e)
+        finally:
+            self.background_tasks.discard(task)
+
+    async def _init_postgres(self) -> None:
+        """Initialize the Postgres database connection."""
+        try:
+            AIOPostgres(url=settings.postgres.url)
+            self._migrate_database()
+        except Exception as e:
+            self.logger.exception("Failed to initialize Postgres client: {e}", e=e)
+            raise
+
+    async def _init_embedding_service(self) -> InferenceServiceProto:
+        """Initialize the embedding service asynchronously.
+
+        :returns: Initialized inference service.
+        :rtype: InferenceServiceProto
+        """
+        worker_index = getattr(bentoml.server_context, "worker_index", 1) - 1
+        service = InferenceService(worker_index=worker_index)
+        await service.readyz()
+        return service
 
     @lru_cache(maxsize=4096)
     @staticmethod
@@ -173,19 +228,6 @@ class APIService(APIServiceProto):
             ctx.response.status_code = 401
             msg = f"Invalid JWT token: {e!s}"
             raise ValueError(msg) from e
-
-    async def _init_postgres(self) -> None:
-        """Initialize the Postgres database connection.
-
-        :raises Exception: If database initialization fails.
-        """
-        try:
-            AIOPostgres(url=settings.postgres.url)
-            self._migrate_database()
-        except Exception as e:
-            self.logger.exception("Failed to initialize Postgres client: {e}", e=e)
-            raise
-        self.db_healthy = True
 
     def _migrate_database(self) -> None:
         """Run database migrations using Alembic.
@@ -725,14 +767,14 @@ class APIService(APIServiceProto):
     async def healthz(self) -> JSONResponse:
         """Check service health status.
 
-        :returns: Dictionary containing health status.
+        :returns: Health status response.
         :rtype: JSONResponse
         """
         if settings.debug:
             return JSONResponse(status_code=200, content={"status": "healthy"})
 
         if not self.db_healthy:
-            return JSONResponse(status_code=503, content={"status": "unhealthy"})
+            return JSONResponse(status_code=503, content={"status": "unhealthy", "reason": "database not healthy"})
 
         return JSONResponse(status_code=200, content={"status": "healthy"})
 
@@ -740,29 +782,24 @@ class APIService(APIServiceProto):
     async def readyz(self) -> JSONResponse:
         """Check if service is ready to handle requests.
 
-        :returns: Dictionary containing readiness status.
+        :returns: Readiness status response.
         :rtype: JSONResponse
-        :raises Exception: If readiness check fails.
         """
         if self.ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
-            return JSONResponse(status_code=503, content={"status": "not ready"})
+            return JSONResponse(status_code=503, content={"status": "not ready", "reason": "queue full"})
+
+        if not self.db_healthy:
+            return JSONResponse(status_code=503, content={"status": "not ready", "reason": "database not ready"})
+
+        if self.embedding_service is None: # type: ignore[]
+            return JSONResponse(status_code=503, content={"status": "not ready", "reason": "embedding service not ready"})
 
         try:
-            # Test database connection
-            async with AIOPostgres().session() as conn:
-                await conn.execute(select(1))
+            await asyncio.wait_for(self.embedding_service.readyz(), timeout=30.0)
+        except asyncio.TimeoutError:
+            return JSONResponse(status_code=503, content={"status": "not ready", "reason": "embedding service timeout"})
 
-            # Test embedding service with timeout
-            try:
-                await asyncio.wait_for(self.embedding_service.readyz(), timeout=30.0)
-            except asyncio.TimeoutError:
-                self.logger.exception("Embedding service readiness check timed out")
-                raise
-        except Exception as e:
-            self.logger.exception("Readiness check failed: {e}", e=e)
-            raise
-        else:
-            return JSONResponse(status_code=200, content={"status": "ready"})
+        return JSONResponse(status_code=200, content={"status": "ready"})
 
     @bentoml.api(
         batchable=True,
