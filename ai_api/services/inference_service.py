@@ -123,7 +123,6 @@ class InferenceService(InferenceServiceProto):
             settings.model.watermark.diffusion_model,
             vae=AutoencoderKL.from_pretrained(settings.model.watermark.encoder_name, cache_dir=settings.model.cache_dir, device_map=self.device_map_string),
             device_map=self.device_map_string,
-            lu_lambdas=True,
             add_watermarker=True,
             torch_dtype=torch.float16,
         ))
