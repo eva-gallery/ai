@@ -13,8 +13,8 @@ configuration files and environment-based settings.
 import os
 from pathlib import Path
 from typing import Any
-
 from urllib.parse import quote_plus
+
 import torch.serialization
 from dynaconf import Dynaconf
 from sentence_transformers.models import Dense

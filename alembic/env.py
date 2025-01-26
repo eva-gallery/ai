@@ -9,6 +9,7 @@ from typing import Any, cast
 from alembic import context
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
+from sqlalchemy.engine.url import URL
 
 from ai_api import settings
 from ai_api.orm import Base
@@ -17,8 +18,10 @@ from ai_api.orm.image import ImageHash, Image # type: ignore[unused-import]
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
+global_url = URL.create("postgresql", settings.postgres.user, settings.postgres.password, settings.postgres.host, settings.postgres.port, settings.postgres.database)
+global_url = global_url.render_as_string(hide_password=False).replace("%", "%%")
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.postgres.url.replace("+asyncpg", ""))
+config.set_main_option("sqlalchemy.url", global_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
@@ -44,7 +47,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = settings.postgres.url.replace("+asyncpg", "")
+    url = global_url
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -64,7 +67,7 @@ def run_migrations_online() -> None:
 
     """
     configuration: dict[str, Any] = cast(dict[str, Any], config.get_section(config.config_ini_section))
-    configuration["sqlalchemy.url"] = settings.postgres.url.replace("+asyncpg", "")
+    configuration["sqlalchemy.url"] = global_url
     connectable = engine_from_config(
         configuration, prefix="sqlalchemy.", poolclass=pool.NullPool,
     )
