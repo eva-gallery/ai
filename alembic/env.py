@@ -18,7 +18,7 @@ from ai_api.orm.image import ImageHash, Image # type: ignore[unused-import]
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
-global_url = URL.create("postgresql", settings.postgres.user, settings.postgres.password, settings.postgres.host, settings.postgres.port, settings.postgres.database)
+global_url = URL.create("postgresql", settings.postgres.user, settings.postgres.password, settings.postgres.host, settings.postgres.port, settings.postgres.db)
 global_url = global_url.render_as_string(hide_password=False).replace("%", "%%")
 config = context.config
 config.set_main_option("sqlalchemy.url", global_url)
