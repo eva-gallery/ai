@@ -97,23 +97,23 @@ class APIService(APIServiceProto):
 
         app.add_exception_handler(exc_class_or_status_code=Exception, handler=self.global_exception_handler)
 
-        # Initialize postgres synchronously
-        try:
-            futures = asyncio.run_coroutine_threadsafe(self._init_postgres(), loop=asyncio.get_event_loop())
-            futures.result(timeout=60)
-        except Exception as e:
-            self.logger.exception("Database initialization failed: {e}", e=e)
-            raise
+        # Get the running event loop from BentoML's worker
+        loop = asyncio.get_event_loop()
 
-        # Only start embedding service task after successful DB init
-        embedding_task = asyncio.create_task(self._init_embedding_service())
-        migration_task = asyncio.create_task(self._init_postgres())
-        self.background_tasks.add(migration_task)
-        self.background_tasks.add(embedding_task)
-        embedding_task.add_done_callback(self._set_embedding_service)
-        embedding_task.add_done_callback(self.global_task_resolver)
-        migration_task.add_done_callback(self._check_migration_success)
-        migration_task.add_done_callback(self.global_task_resolver)
+        # Start tasks in the event loop without waiting
+        async def start_tasks() -> None:
+            embedding_task = asyncio.create_task(self._init_embedding_service())
+            migration_task = asyncio.create_task(self._init_postgres())
+
+            self.background_tasks.add(migration_task)
+            self.background_tasks.add(embedding_task)
+
+            embedding_task.add_done_callback(self._set_embedding_service)
+            embedding_task.add_done_callback(self.global_task_resolver)
+            migration_task.add_done_callback(self._check_migration_success)
+            migration_task.add_done_callback(self.global_task_resolver)
+
+        asyncio.run_coroutine_threadsafe(start_tasks(), loop)
 
     def _set_embedding_service(self, task: asyncio.Task[InferenceServiceProto]) -> None:
         """Set embedding service from task result.
