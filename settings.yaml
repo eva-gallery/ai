@@ -141,12 +141,12 @@ testing:
         workers: 1
         resources:
           cpu: 1
-          memory: 1Gi
-      embedding:
-        workers: 1
-        resources:
-          cpu: 1
-          memory: 4Gi
+          memory: 24Gi
+      # embedding:
+      #   workers: 1
+      #   resources:
+      #     cpu: 1
+      #     memory: 4Gi
     inference:
       fast_batched_op_max_batch_size: 2
       fast_batched_op_max_latency_ms: 100

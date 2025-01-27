@@ -821,11 +821,6 @@ class APIService(APIServiceProto):
         if self.embedding_service is None: # type: ignore[]
             return JSONResponse(status_code=503, content={"status": "not ready", "reason": "embedding service not ready"})
 
-        try:
-            await asyncio.wait_for(self.embedding_service.readyz(), timeout=30.0)
-        except asyncio.TimeoutError:
-            return JSONResponse(status_code=503, content={"status": "not ready", "reason": "embedding service timeout"})
-
         return JSONResponse(status_code=200, content={"status": "ready"})
 
     @bentoml.api(

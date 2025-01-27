@@ -31,14 +31,6 @@ class InferenceServiceProto(Protocol):
     to provide AI operations like embedding generation and image processing.
     """
 
-    async def readyz(self) -> dict[str, str]:
-        """Check if the service is ready to handle requests.
-
-        :returns: Dictionary containing service status.
-        :rtype: dict[str, str]
-        """
-        ...
-
     async def embed_text(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for a list of text inputs.
 
