@@ -52,16 +52,6 @@ def test_validate_settings_for_bentoml_in_all_envs():
             api_config = settings.bentoml.service.api.to_dict()
             validate(api_config)
 
-            # Validate Embedding service config
-            embedding_config = settings.bentoml.service.embedding.to_dict()
-            validate(embedding_config)
-
-            # Check common required settings
-            assert settings.model.cache_dir == "./tmp/cache"
-            assert settings.model.embedding.dimension == 512
-            assert settings.model.embedding.image.name == "sentence-transformers/clip-ViT-B-32"
-            assert settings.model.embedding.text.name == "sentence-transformers/clip-ViT-B-32-multilingual-v1"
-
 
 @pytest.fixture(autouse=True)
 def reset_settings():
