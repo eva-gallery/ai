@@ -24,7 +24,7 @@ from typing import Any
 import aiohttp
 import bentoml
 import jwt
-from fastapi import FastAPI, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from imagehash import dhash, phash, whash
 from jwt.exceptions import InvalidTokenError
@@ -86,6 +86,8 @@ class APIService(APIServiceProto):
     def __init__(self) -> None:
         """Initialize the API service with required dependencies."""
         self.logger = logger
+        self.healthy = True
+        self.db_ready = False
         self.ctx = bentoml.Context()
         self.background_tasks: set[asyncio.Task[Any]] = set()
         self.jwt_secret = settings.jwt_secret
@@ -98,15 +100,20 @@ class APIService(APIServiceProto):
         # Initialize postgres synchronously
         try:
             futures = asyncio.run_coroutine_threadsafe(self._init_postgres(), loop=asyncio.get_event_loop())
-            futures.result(timeout=30)
+            futures.result(timeout=60)
         except Exception as e:
             self.logger.exception("Database initialization failed: {e}", e=e)
             raise
 
         # Only start embedding service task after successful DB init
         embedding_task = asyncio.create_task(self._init_embedding_service())
+        migration_task = asyncio.create_task(self._init_postgres())
+        self.background_tasks.add(migration_task)
         self.background_tasks.add(embedding_task)
-        embedding_task.add_done_callback(lambda t: self._set_embedding_service(t))
+        embedding_task.add_done_callback(self._set_embedding_service)
+        embedding_task.add_done_callback(self.global_task_resolver)
+        migration_task.add_done_callback(self._check_migration_success)
+        migration_task.add_done_callback(self.global_task_resolver)
 
     def _set_embedding_service(self, task: asyncio.Task[InferenceServiceProto]) -> None:
         """Set embedding service from task result.
@@ -117,8 +124,12 @@ class APIService(APIServiceProto):
             self.embedding_service = task.result()
         except Exception as e:
             self.logger.exception("Embedding service initialization failed: {e}", e=e)
-        finally:
-            self.background_tasks.discard(task)
+
+    def _check_migration_success(self, task: asyncio.Task[Any]) -> None:
+        if task.done() and task.exception() is not None:
+            self.healthy = False
+            raise task.exception()  # type: ignore[BaseException]
+        self.db_ready = True
 
     async def _init_postgres(self) -> None:
         """Initialize the Postgres database connection."""
@@ -128,6 +139,23 @@ class APIService(APIServiceProto):
         except Exception as e:
             self.logger.exception("Failed to initialize Postgres client: {e}", e=e)
             raise
+
+    def global_task_resolver(self, task: asyncio.Task[Any]) -> None:
+        """Resolve all tasks and handle exceptions.
+
+        :raises asyncio.TimeoutError: If tasks take too long to complete.
+        :raises Exception: If any task fails during execution.
+        """
+        try:
+            if task.done():
+                if task.exception() is not None:
+                    raise task.exception()  # type: ignore[BaseException]  # noqa: TRY301
+                return
+            task.cancel()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
+        finally:
+            self.background_tasks.discard(task)
 
     async def _init_embedding_service(self) -> InferenceServiceProto:
         """Initialize the embedding service asynchronously.
@@ -760,6 +788,9 @@ class APIService(APIServiceProto):
         if settings.debug:
             return JSONResponse(status_code=200, content={"status": "healthy"})
 
+        if not self.healthy:
+            return JSONResponse(status_code=503, content={"status": "unhealthy", "reason": "migration not complete or couldn't connect to database"})
+
         try:
             async with AIOPostgres().session() as conn:
                 await conn.execute(select(1))
@@ -777,6 +808,9 @@ class APIService(APIServiceProto):
         """
         if self.ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
             return JSONResponse(status_code=503, content={"status": "not ready", "reason": "queue full"})
+
+        if not self.db_ready:
+            return JSONResponse(status_code=503, content={"status": "not ready", "reason": "database not ready, migrations didn't complete yet"})
 
         try:
             async with AIOPostgres().session() as conn:
