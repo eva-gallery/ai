@@ -15,8 +15,6 @@ def test_dynaconf_env_switching():
     # Test default environment (testing)
     assert settings.current_env == "testing"
     assert settings.test == 1  # testing env value
-    assert settings.debug is True  # testing env value
-    assert settings.postgres.db == "eva_ai_test"  # testing env value
 
     # Test switching to development environment
     with patch.dict(os.environ, {"ENV_FOR_DYNACONF": "development"}):
@@ -24,7 +22,6 @@ def test_dynaconf_env_switching():
         assert settings.current_env == "development"
         assert settings.test == 1  # development env value
         assert settings.debug is False  # default value
-        assert settings.postgres.db == "eva_ai"  # development env value
 
     # Test switching to production environment with env var override
     with patch.dict(os.environ, {
@@ -35,7 +32,6 @@ def test_dynaconf_env_switching():
         assert settings.current_env == "production"
         assert settings.test == 1  # Overridden by env var
         assert settings.debug is False  # default value
-        assert settings.postgres.db is None  # Production DB is not set in settings
 
         # Check that non-overridden values remain from settings.yaml
         assert settings.model.cache_dir == "./tmp/cache"

@@ -295,7 +295,7 @@ class APIService(APIServiceProto):
         alembic_cfg = Config("alembic.ini")
         command.upgrade(alembic_cfg, "head")
 
-    async def _save_and_notify(
+    async def _save_and_notify(  # noqa: C901, PLR0915
         self,
         image_pil: PILImage,
         duplicate_status: ImageDuplicateStatus,
