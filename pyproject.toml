@@ -34,10 +34,10 @@ pgvector = "0.*"
 loguru = "0.*"
 alembic = "1.*"
 psycopg2-binary = "2.*"
+scikit-image = "0.*"
 
 [tool.poetry.group.dev.dependencies]
 matplotlib = "^3.10.0"
-scikit-image = "0.*"
 pre-commit = "3.*"
 bandit = "1.*"
 pytest = "8.*"
