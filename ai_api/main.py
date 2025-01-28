@@ -15,18 +15,16 @@ from __future__ import annotations
 
 import asyncio
 import io
-import os
 import traceback
 import uuid
-from functools import lru_cache
-from typing import Any
+from functools import wraps
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 import aiohttp
 import bentoml
 import jwt
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
-from imagehash import dhash, phash, whash
 from jwt.exceptions import InvalidTokenError
 from PIL import Image
 from PIL.Image import Image as PILImage  # noqa: TC002
@@ -50,15 +48,81 @@ from ai_api.orm import Image as ORMImage
 from ai_api.services import InferenceService
 from ai_api.util import get_logger
 
-hash_method = {
-    "phash": phash,
-    "dhash": dhash,
-    "whash": whash,
-}
-
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 app = FastAPI()
 logger = get_logger()
+
+
+T = TypeVar("T")
+P = ParamSpec("P")
+
+
+def async_lru_cache(maxsize: int = 128) -> Callable[[Callable[P, T]], Callable[P, T]]:
+    """Create an LRU cache decorator for async functions.
+
+    :param maxsize: Maximum size of the cache.
+    :type maxsize: int
+    :returns: Decorator function.
+    """
+    cache = {}
+
+    def decorator(func: Callable[P, T]) -> Callable[P, T]:
+        @wraps(func)
+        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+            key = str(args) + str(kwargs)
+            if key in cache:
+                return cache[key]
+
+            result = await func(*args, **kwargs)  # type: ignore[arg-type]
+
+            if len(cache) >= maxsize:
+                # Remove oldest item (first item in dict)
+                cache.pop(next(iter(cache)))
+
+            cache[key] = result
+            return result
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorator
+
+@async_lru_cache(maxsize=4096)
+async def _get_query_embeddings(query: str, embedding_service: InferenceServiceProto) -> tuple[float, ...]:
+    """Get and cache text query embeddings.
+
+    :param query: Text query to embed.
+    :param embedding_service: Service to generate embeddings.
+    :returns: Tuple of embedding values.
+    """
+    return tuple((await embedding_service.embed_text([query]))[0])
+
+@async_lru_cache(maxsize=4096)
+async def _get_image_embedding(image_id: int) -> tuple[float] | None:
+    """Get cached image embeddings by ID.
+
+    :param image_id: Database ID of the image.
+    :returns: Tuple of embedding values if found.
+    """
+    try:
+        async with AIOPostgres().session() as conn:
+            logger.debug("Executing embedding query for image ID: {id}", id=image_id)
+            embedding_stmt = select(ORMGalleryEmbedding).where(
+                ORMGalleryEmbedding.image_id == image_id,
+            )
+            embedding_result = await conn.execute(embedding_stmt)
+            embedding = embedding_result.scalar_one_or_none()
+
+            if embedding is None:
+                logger.debug("No embedding found for image ID: {id}", id=image_id)
+                return None
+
+            logger.debug("Found embedding for image ID: {id}", id=image_id)
+            return tuple(embedding.image_embedding)
+    except Exception as e:
+        logger.exception("Failed to search for image embeddings: {e}", e=e)
+        return None
 
 
 @bentoml.service(
@@ -78,8 +142,6 @@ class APIService(APIServiceProto):
         ctx: BentoML context for request handling.
         background_tasks: Set of running background tasks.
         jwt_secret: Secret for JWT token validation.
-        hash_fn: Function to generate perceptual hashes.
-        hash_threshold: Threshold for hash similarity comparison.
 
     """
 
@@ -89,10 +151,9 @@ class APIService(APIServiceProto):
         self.healthy = True
         self.db_ready = False
         self.ctx = bentoml.Context()
+        self.ctx.state["queued_processing"] = 0
         self.background_tasks: set[asyncio.Task[Any]] = set()
         self.jwt_secret = settings.jwt_secret
-        self.hash_fn = hash_method[settings.model.hash.method]
-        self.hash_threshold = settings.model.hash.threshold
         self.embedding_service: InferenceServiceProto = None  # type: ignore[]
 
         app.add_exception_handler(exc_class_or_status_code=Exception, handler=self.global_exception_handler)
@@ -104,6 +165,8 @@ class APIService(APIServiceProto):
         async def start_tasks() -> None:
             embedding_task = asyncio.create_task(self._init_embedding_service())
             migration_task = asyncio.create_task(self._init_postgres())
+
+            self.logger.info("Started model and migration tasks")
 
             self.background_tasks.add(migration_task)
             self.background_tasks.add(embedding_task)
@@ -134,10 +197,13 @@ class APIService(APIServiceProto):
     async def _init_postgres(self) -> None:
         """Initialize the Postgres database connection."""
         try:
+            self.logger.info("Initializing Postgres client")
             AIOPostgres(url=settings.postgres.url)
+            self.logger.info("Postgres client initialized. Running migrations.")
             self._migrate_database()
+            self.logger.info("Migrations completed successfully.")
         except Exception as e:
-            self.logger.exception("Failed to initialize Postgres client: {e}", e=e)
+            self.logger.exception("Failed to initialize Postgres client or run migrations: {e}", e=e)
             raise
 
     def global_task_resolver(self, task: asyncio.Task[Any]) -> None:
@@ -149,13 +215,19 @@ class APIService(APIServiceProto):
         try:
             if task.done():
                 if task.exception() is not None:
-                    raise task.exception()  # type: ignore[BaseException]  # noqa: TRY301
+                    self.logger.exception("Task failed: {task}", task=task)
                 return
             task.cancel()
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
         finally:
             self.background_tasks.discard(task)
+
+    def decrement_queued_processing(self, _: asyncio.Task[None]) -> None:
+        """Decrement the queued processing state."""
+        self.logger.debug("Decrementing queued processing")
+        self.ctx.state["queued_processing"] -= 1
+        self.logger.debug("Queued processing: {queued_processing}", queued_processing=self.ctx.state["queued_processing"])
 
     async def _init_embedding_service(self) -> InferenceServiceProto:
         """Initialize the embedding service asynchronously.
@@ -167,41 +239,6 @@ class APIService(APIServiceProto):
         service = InferenceService(worker_index=worker_index)
         await service.readyz()
         return service
-
-    @lru_cache(maxsize=4096)
-    @staticmethod
-    async def _get_and_cache_query_embeddings(query: str, embedding_service: InferenceServiceProto) -> tuple[float, ...]:
-        """Get and cache text query embeddings.
-
-        :param query: Text query to embed.
-        :type query: str
-        :param embedding_service: Service to generate embeddings.
-        :type embedding_service: InferenceServiceProto
-        :returns: Tuple of embedding values.
-        :rtype: tuple[float, ...]
-        """
-        return tuple((await embedding_service.embed_text([query]))[0])
-
-    @lru_cache(maxsize=4096)
-    @staticmethod
-    async def _search_image_id_cache(image_id: int) -> tuple[float] | None:
-        """Get cached image embeddings by ID.
-
-        :param image_id: Database ID of the image.
-        :type image_id: int
-        :returns: Tuple of embedding values if found.
-        :rtype: tuple[float] | None
-        """
-        try:
-            async with AIOPostgres().session() as conn:
-                # First get the embedding for the input image_id
-                embedding_stmt = select(ORMGalleryEmbedding).where(ORMGalleryEmbedding.image_id == image_id)
-                embedding_result = await conn.execute(embedding_stmt)
-                embedding = embedding_result.scalar_one_or_none()
-                return tuple(embedding.image_embedding) if embedding else None
-        except Exception as e:
-            logger.exception("Failed to search for image embeddings: {e}", e=e)
-            return None
 
     async def global_exception_handler(self, request: Request, exc: Exception) -> JSONResponse:
         """Global exception handler for the API.
@@ -228,7 +265,7 @@ class APIService(APIServiceProto):
         :type ctx: bentoml.Context
         :raises ValueError: If token is missing or invalid.
         """
-        if os.getenv("CI"):
+        if not settings.verify_jwt:
             return
 
         auth_header = ctx.request.headers.get("Authorization")
@@ -249,8 +286,9 @@ class APIService(APIServiceProto):
 
         This method is skipped in CI environments.
         """
-        if os.getenv("CI"):
+        if settings.debug:
             return
+
         from alembic import command
         from alembic.config import Config
 
@@ -284,7 +322,10 @@ class APIService(APIServiceProto):
             "Authorization": f"Bearer {jwt.encode({'sub': 'ai-service'}, self.jwt_secret, algorithm='HS256')}",
         }
 
+        self.logger.debug("Sending PATCH request to backend for {image_uuid}", image_uuid=image_model.image_uuid)
+
         if duplicate_status is not ImageDuplicateStatus.OK:
+            self.logger.debug("Duplicate status for {image_uuid}: {duplicate_status}", image_uuid=image_model.image_uuid, duplicate_status=duplicate_status)
             patch_request = BackendPatchRequest(
                 image_uuid=image_model.image_uuid,
                 closest_match_uuid=most_similar_image_uuid,
@@ -297,28 +338,48 @@ class APIService(APIServiceProto):
             data = aiohttp.FormData()
             data.add_field("json", patch_request.model_dump_json(), content_type="application/json")
 
-            async with aiohttp.ClientSession() as session, session.patch(
-                settings.eva_backend.backend_image_patch_route,
-                data=data,
-                headers=headers,
-            ) as response:
-                if response.status not in (200, 201):
-                    self.logger.error("Failed to patch backend: {response}", response=await response.text())
+            try:
+                async with aiohttp.ClientSession() as session, session.patch(
+                    settings.eva_backend.backend_image_patch_route,
+                    data=data,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as response:
+                    if response.status not in (200, 201):
+                        self.logger.error("Failed to patch backend: {response}", response=await response.text())
+            except asyncio.TimeoutError:
+                self.logger.exception("Request to backend timed out for {image_uuid}", image_uuid=image_model.image_uuid)
+            except aiohttp.ClientError as e:
+                self.logger.exception("Failed to connect to backend for {image_uuid}: {e}", image_uuid=image_model.image_uuid, e=e)
+            except Exception as e:
+                self.logger.exception("Unexpected error while patching backend for {image_uuid}: {e}", image_uuid=image_model.image_uuid, e=e)
+            return
 
-        async with AIOPostgres() as conn:
-            # Add and flush image data model
-            conn.add(image_model)
-            await conn.flush()
+        self.logger.debug("Saving image data for {image_uuid}", image_uuid=image_model.image_uuid)
 
-            # Set image_id on gallery embedding and add
-            gallery_embedding_model.image_id = image_model.id
-            conn.add(gallery_embedding_model)
-            await conn.commit()
+        try:
+            async with AIOPostgres().session() as conn:
+                # Add and flush image data model
+                conn.add(image_model)
+                await conn.flush()
+
+                # Set image_id on gallery embedding and add
+                gallery_embedding_model.image_id = image_model.id
+                conn.add(gallery_embedding_model)
+                await conn.commit()
+
+                self.logger.debug("Saved image data for {image_uuid}", image_uuid=image_model.image_uuid)
+        except Exception as e:
+            self.logger.exception("Failed to save image data for {image_uuid}: {e}", image_uuid=image_model.image_uuid, e=e)
+            raise
 
         # Convert PIL image to bytes for storage
+        self.logger.debug("Converting PIL image to bytes for {image_uuid}", image_uuid=image_model.image_uuid)
         image_bytes = io.BytesIO()
         image_pil.save(image_bytes, format=image_pil.format or "PNG")
         image_bytes.seek(0)
+
+        self.logger.debug("Converted PIL image to bytes for {image_uuid}", image_uuid=image_model.image_uuid)
 
         # Send PATCH request to backend with full model
         patch_request = BackendPatchRequest(
@@ -335,15 +396,27 @@ class APIService(APIServiceProto):
         data.add_field("json", patch_request.model_dump_json(), content_type="application/json")
         data.add_field("image", image_bytes, filename="image.png", content_type="image/png")
 
-        async with aiohttp.ClientSession() as session, session.patch(
-            settings.eva_backend.backend_image_patch_route,
-            data=data,
-            headers=headers,
-        ) as response:
-            if response.status not in (200, 201):
-                self.logger.error("Failed to patch backend: {response}", response=await response.text())
+        self.logger.debug("Sending PATCH request to backend for {image_uuid}", image_uuid=image_model.image_uuid)
 
-    async def _process_image_data(
+        try:
+            async with aiohttp.ClientSession() as session, session.patch(
+                settings.eva_backend.backend_image_patch_route,
+                data=data,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as response:
+                if response.status not in (200, 201):
+                    self.logger.error("Failed to patch backend: {response}", response=await response.text())
+        except asyncio.TimeoutError:
+            self.logger.exception("Request to backend timed out for {image_uuid}", image_uuid=image_model.image_uuid)
+        except aiohttp.ClientError as e:
+            self.logger.exception("Failed to connect to backend for {image_uuid}: {e}", image_uuid=image_model.image_uuid, e=e)
+        except Exception as e:
+            self.logger.exception("Unexpected error while patching backend for {image_uuid}: {e}", image_uuid=image_model.image_uuid, e=e)
+
+        self.logger.debug("All done")
+
+    async def _process_image_data(  # noqa: PLR0915
         self,
         image_pil: PILImage,
         artwork_uuid: str,
@@ -351,7 +424,7 @@ class APIService(APIServiceProto):
         metadata: dict[str, Any],
         modified_image_uuid: str | None = None,
     ) -> None:
-        """Process image data including embedding, duplicate checking, and watermarking.
+        """Process image data including embedding and watermarking.
 
         :param image_pil: PIL image to process.
         :type image_pil: PILImage
@@ -363,47 +436,62 @@ class APIService(APIServiceProto):
         :type metadata: dict[str, Any]
         :raises: May raise exceptions during image processing or database operations.
         """
-        # Generate perceptual hash
-        image_hash = self.hash_fn(image_pil).hash.tobytes()
         image_embed = (await self.embedding_service.embed_image([image_pil]))[0]
+        self.logger.debug("Type of image_embed: {type}", type=type(image_embed))
+
+        self.logger.debug("Generated image embedding for {image_uuid}", image_uuid=artwork_uuid)
 
         duplicate_status = ImageDuplicateStatus.OK
         most_similar_image_uuid = None
 
         if metadata.get("ignore_duplicate_check", False) in (False, None):
             # Check for AI watermark
+            self.logger.debug("Checking for AI watermark for {image_uuid}", image_uuid=artwork_uuid)
             ai_watermark = (await self.embedding_service.check_ai_watermark([image_pil]))[0]
-
+            self.logger.debug("AI watermark check result for {image_uuid}: {ai_watermark}", image_uuid=artwork_uuid, ai_watermark=ai_watermark)
             if ai_watermark:
                 duplicate_status = ImageDuplicateStatus.PLAGIARIZED
             else:
+                # Check for duplicate via embedding similarity
+                self.logger.debug("Checking for duplicates via embedding similarity for {image_uuid}", image_uuid=artwork_uuid)
                 async with AIOPostgres().session() as conn:
-                    # Find most similar image by perceptual hash
-                    result = await conn.execute(
-                        select(ORMImage.image_uuid)
-                        .where(ORMImage.public.is_(True))
-                        .order_by(
-                            ORMImage.image_hash.hamming_similarity(image_hash).desc(),
+                    # Find most similar image by embedding distance
+                    distance_col = ORMGalleryEmbedding.image_embedding_distance_to(image_embed).label("distance")
+                    stmt = (
+                        select(ORMImage.image_uuid, distance_col)
+                        .join(ORMGalleryEmbedding, ORMGalleryEmbedding.image_id == ORMImage.id)
+                        .where(
+                            distance_col >= settings.model.similarity_threshold,
                         )
-                        .having(ORMImage.image_hash.hamming_similarity(image_hash) > self.hash_threshold)
-                        .limit(1),
+                        .order_by(distance_col.desc())  # DESC because higher values are more similar
+                        .limit(1)
                     )
-
-                    most_similar = result.scalar_one_or_none()
-                    if most_similar:
+                    result = await conn.execute(stmt)
+                    row = result.first()
+                    if row:
+                        most_similar = row.image_uuid
+                        distance = row.distance
+                        self.logger.debug(
+                            "Found similar image for {image_uuid}: {most_similar} with distance {distance}",
+                            image_uuid=artwork_uuid,
+                            most_similar=most_similar,
+                            distance=distance,
+                        )
                         duplicate_status = ImageDuplicateStatus.EXISTS
                         most_similar_image_uuid = most_similar
 
         if duplicate_status is not ImageDuplicateStatus.OK:
+            self.logger.debug("Duplicate status for {image_uuid}: {duplicate_status} in _process_image_data", image_uuid=artwork_uuid, duplicate_status=duplicate_status)
+            self.logger.debug("Saving and notifying for {image_uuid}", image_uuid=artwork_uuid)
             await self._save_and_notify(
                 duplicate_status=duplicate_status,
                 most_similar_image_uuid=most_similar_image_uuid,
                 image_pil=image_pil,
                 image_model=ORMImage(
                     original_image_uuid=artwork_uuid,
+                    image_uuid=artwork_uuid,
                     generated_status=ai_generated_status,
                     image_metadata=metadata,
-                    image_hash=image_hash,
                 ),
                 gallery_embedding_model=ORMGalleryEmbedding(
                     image_embedding=image_embed,
@@ -416,6 +504,7 @@ class APIService(APIServiceProto):
             return
 
         # Get embeddings and caption
+        self.logger.debug("Getting embeddings and caption for {image_uuid}", image_uuid=artwork_uuid)
         generated_image_caption, metadata_embedding = await asyncio.gather(
             self.embedding_service.generate_caption([image_pil]),
             self.embedding_service.embed_text([str(metadata)]),
@@ -423,15 +512,19 @@ class APIService(APIServiceProto):
 
         generated_image_caption = generated_image_caption[0]
         metadata_embedding = metadata_embedding[0]
+        self.logger.debug("Generated image caption for {image_uuid}: {caption}", image_uuid=artwork_uuid, caption=generated_image_caption)
 
         # Detect if AI generated
         watermarked_image_pil = image_pil
         watermarked_image_embed = None
         if ai_generated_status == AIGeneratedStatus.NOT_GENERATED:
+            self.logger.debug("Detecting AI generation for {image_uuid}", image_uuid=artwork_uuid)
             ai_generated_status = (await self.embedding_service.detect_ai_generation([image_pil]))[0]
             if ai_generated_status == AIGeneratedStatus.NOT_GENERATED:
+                self.logger.debug("Adding AI watermark for {image_uuid}", image_uuid=artwork_uuid)
                 watermarked_image_pil = (await self.embedding_service.add_ai_watermark([image_pil], prompts=[generated_image_caption]))[0]
 
+        self.logger.debug("Embedding watermarked image for {image_uuid}", image_uuid=artwork_uuid)
         watermarked_image_embed, generated_caption_embed = await asyncio.gather(
             self.embedding_service.embed_image([watermarked_image_pil]),
             self.embedding_service.embed_text([generated_image_caption]),
@@ -439,28 +532,42 @@ class APIService(APIServiceProto):
         watermarked_image_embed = watermarked_image_embed[0]
         generated_caption_embed = generated_caption_embed[0]
 
+        self.logger.debug("Embedding generated caption for {image_uuid}", image_uuid=artwork_uuid)
+
         user_caption = metadata.get("caption")
+        self.logger.debug("User caption for {image_uuid}: {user_caption}", image_uuid=artwork_uuid, user_caption=user_caption)
         user_caption_embed = None
         if user_caption:
+            self.logger.debug("Embedding user caption for {image_uuid}", image_uuid=artwork_uuid)
             user_caption_embed = (await self.embedding_service.embed_text([user_caption]))[0]
+            self.logger.debug("Embedded user caption for {image_uuid}: {user_caption_embed}", image_uuid=artwork_uuid, user_caption_embed=str(user_caption_embed)[:100])
 
-        metadata["ai_generated"] = ai_generated_status
-        metadata["duplicate_status"] = duplicate_status
+        metadata["ai_generated"] = ai_generated_status.value
+        metadata["duplicate_status"] = duplicate_status.value
 
-        self.ctx.state["queued_processing"] -= 1
+        self.logger.debug("Metadata for {image_uuid}: {metadata}", image_uuid=artwork_uuid, metadata=metadata)
+
+        self.logger.debug("Removed from queued_processing")
 
         metadata["ignore_duplicate_check"] = False
 
-        orm_image_kwargs = {
+        orm_image_kwargs: dict[str, Any] = {
             "original_image_uuid": artwork_uuid,
             "image_metadata": metadata,
-            "image_hash": image_hash,
         }
 
         if modified_image_uuid:
             orm_image_kwargs["image_uuid"] = modified_image_uuid
+        else:
+            orm_image_kwargs["image_uuid"] = str(uuid.uuid4())
+
+        orm_image_kwargs["generated_status"] = ai_generated_status.value
+        orm_image_kwargs["public"] = False
+        orm_image_kwargs["user_annotation"] = user_caption
+        orm_image_kwargs["generated_annotation"] = generated_image_caption
 
         # Save to database and send to backend
+        self.logger.debug("Saving and notifying for {image_uuid}", image_uuid=artwork_uuid)
         await self._save_and_notify(
             duplicate_status=duplicate_status,
             image_pil=watermarked_image_pil,
@@ -472,6 +579,7 @@ class APIService(APIServiceProto):
                 user_caption_embedding=user_caption_embed,
                 generated_caption_embedding=generated_caption_embed,
             ),
+            most_similar_image_uuid=most_similar_image_uuid,
         )
 
     @app.get(path="/image/search_query", response_model=None)
@@ -489,7 +597,7 @@ class APIService(APIServiceProto):
         :raises ValueError: If JWT token is invalid.
         """
         self._verify_jwt(self.ctx)
-        embedded_text: tuple[float, ...] = await self._get_and_cache_query_embeddings(
+        embedded_text: tuple[float, ...] = await _get_query_embeddings(
             query,
             self.embedding_service,
         )
@@ -499,14 +607,19 @@ class APIService(APIServiceProto):
         try:
             async with AIOPostgres().session() as conn:
                 stmt = (
-                    select(ORMGalleryEmbedding.image_id)
-                    .order_by(ORMGalleryEmbedding.image_embedding_distance_to(embedded_text))
+                    select(ORMImage.image_uuid)
+                    .join(ORMGalleryEmbedding, ORMGalleryEmbedding.image_id == ORMImage.id)
+                    .where(ORMImage.public.is_(True))
+                    .order_by(ORMGalleryEmbedding.image_embedding_distance_to(embedded_text).desc())
                     .limit(count)
                     .offset(page * count)
                 )
 
+                self.logger.debug("Executing search query: {stmt}", stmt=str(stmt))
+
                 result = await conn.execute(stmt)
                 results = result.scalars().all()
+                self.logger.debug("Found {count} results", count=len(results))
         except Exception as e:
             self.logger.exception("Failed to search for images: {e}", e=e)
             results = []
@@ -527,41 +640,61 @@ class APIService(APIServiceProto):
         :rtype: ImageSearchResponse
         :raises ValueError: If JWT token is invalid.
         """
-        self._verify_jwt(self.ctx)
-        image_uuid_obj: uuid.UUID = uuid.UUID(image_uuid)
+        self.logger.info("Starting image search for UUID: {uuid} with count={count}, page={page}", uuid=image_uuid, count=count, page=page)
+
         try:
+            self._verify_jwt(self.ctx)
+            self.logger.debug("JWT verification passed")
+
             async with AIOPostgres().session() as conn:
+                self.logger.debug("Database session established")
+
                 # First get the image ID from the UUID
-                image_id_stmt = select(ORMImage.id).where(ORMImage.image_uuid == image_uuid_obj, ORMImage.public.is_(True))
+                image_id_stmt = select(ORMImage.id).where(ORMImage.image_uuid == image_uuid, ORMImage.public.is_(True))
+                self.logger.debug("Executing image ID query: {stmt}", stmt=str(image_id_stmt))
+
                 image_id_result = await conn.execute(image_id_stmt)
                 image_id = image_id_result.scalar_one_or_none()
+                self.logger.debug("Image ID query result: {id}", id=image_id)
 
                 if image_id is None:
+                    self.logger.info("Image not found or not public: {uuid}", uuid=image_uuid)
                     self.ctx.response.status_code = 404
                     return ImageSearchResponse(image_uuid=[])
 
                 # Get the embedding for this image ID
-                embedding = await self._search_image_id_cache(image_id)
+                self.logger.debug("Fetching embedding from cache for image ID: {id}", id=image_id)
+                embedding = await _get_image_embedding(image_id)
+
                 if embedding is None:
+                    self.logger.info("No embedding found for image ID: {id}", id=image_id)
                     self.ctx.response.status_code = 404
                     return ImageSearchResponse(image_uuid=[])
+
+                self.logger.debug("Got embedding, length: {len}", len=len(embedding))
 
                 # Get similar images, excluding the input image
                 stmt = (
                     select(ORMImage.image_uuid)
                     .join(ORMGalleryEmbedding, ORMGalleryEmbedding.image_id == ORMImage.id)
                     .where(ORMImage.id != image_id)
-                    .order_by(ORMGalleryEmbedding.image_embedding_distance_to(embedding))
+                    .order_by(ORMGalleryEmbedding.image_embedding_distance_to(embedding).desc())
                     .limit(count)
                     .offset(page * count)
                 )
 
+                self.logger.debug("Executing similarity search query: {stmt}", stmt=str(stmt))
                 result = await conn.execute(stmt)
+                self.logger.debug("Similarity search query executed")
+
                 results = result.scalars().all()
+                self.logger.debug("Found {count} similar images", count=len(results))
+
         except Exception as e:
             self.logger.exception("Failed to search for images: {e}", e=e)
             results = []
 
+        self.logger.info("Completed image search for UUID: {uuid}, found {count} results", uuid=image_uuid, count=len(results))
         return ImageSearchResponse(image_uuid=list(results))
 
     @app.get(path="/image/search_image_raw", response_model=None)
@@ -621,30 +754,21 @@ class APIService(APIServiceProto):
 
         :param image_uuid: Single image UUID or list of image UUIDs to publish.
         :type image_uuid: str | list[str]
+        :raises ValueError: If JWT token is invalid.
         :raises SQLAlchemyError: If the database update fails.
         :returns: JSONResponse with status code and error message if any.
         :rtype: JSONResponse
         """
+        self._verify_jwt(self.ctx)
+
         if isinstance(image_uuid, str):
             image_uuid = [image_uuid]
 
-        async with AIOPostgres() as conn:
-            try:
-                stmt = select(ORMImage.image_uuid).where(ORMImage.image_uuid.in_(image_uuid))
-                result = await conn.execute(stmt)
-                existing_uuids = set(await (await result.scalars()).all())
+        self.logger.debug("Publishing images: {image_uuid}", image_uuid=image_uuid)
 
-                missing_uuids = set(image_uuid) - existing_uuids
-                if missing_uuids:
-                    return JSONResponse(
-                        status_code=404,
-                        content={
-                            "error": "One or more requested images not found",
-                            "missing_uuids": list(missing_uuids),
-                        },
-                    )
-
-                # Perform the update
+        try:
+            async with AIOPostgres().session() as conn:
+                # Perform the update and return number of rows updated
                 stmt = (
                     update(ORMImage)
                     .where(ORMImage.image_uuid.in_(image_uuid))
@@ -652,15 +776,39 @@ class APIService(APIServiceProto):
                 )
                 result = await conn.execute(stmt)
 
-                # Double check affected rows
-                if result.rowcount != len(image_uuid):
-                    self.logger.exception("Expected to update {img_count} rows, but updated {row_count}", img_count=len(image_uuid), row_count=result.rowcount)
-                    conn.rollback()
-                    return JSONResponse(status_code=500, content={"error": "Failed to publish all images"})
+                if result.rowcount == 0:
+                    return JSONResponse(
+                        status_code=404,
+                        content={
+                            "error": "No images found to update",
+                            "missing_uuids": image_uuid,
+                        },
+                    )
 
-            except SQLAlchemyError as e:
-                self.logger.exception("Failed to publish images: {e}", e=e)
-                raise
+                if result.rowcount != len(image_uuid):
+                    self.logger.error(
+                        "Expected to update {img_count} rows, but updated {row_count}",
+                        img_count=len(image_uuid),
+                        row_count=result.rowcount,
+                    )
+                    return JSONResponse(
+                        status_code=404,
+                        content={
+                            "error": "Some images not found",
+                            "updated_count": result.rowcount,
+                            "requested_count": len(image_uuid),
+                        },
+                    )
+
+                await conn.commit()
+                self.logger.debug("Committed transaction")
+
+        except SQLAlchemyError as e:
+            self.logger.exception("Failed to publish images: {e}", e=e)
+            return JSONResponse(
+                status_code=500,
+                content={"error": "Database error occurred while publishing images"},
+            )
 
         return JSONResponse(status_code=200, content={})
 
@@ -669,6 +817,26 @@ class APIService(APIServiceProto):
         """Check if an image exists in the database."""
         async with AIOPostgres().session() as conn:
             result = await conn.execute(select(ORMImage.image_uuid).where(ORMImage.image_uuid == image_uuid))
+        return Response(status_code=200 if result.scalar_one_or_none() is not None else 404)
+
+    @app.get(path="/image/check-public")
+    async def check_public(self, image_uuid: str) -> Response:
+        """Check if an image is marked as public in the database.
+
+        :param image_uuid: UUID of the image to check.
+        :type image_uuid: str
+        :returns: Response with 200 if image is public, 404 if not found or not public.
+        :rtype: Response
+        """
+        self._verify_jwt(self.ctx)
+        async with AIOPostgres().session() as conn:
+            result = await conn.execute(
+                select(ORMImage.image_uuid)
+                .where(
+                    ORMImage.image_uuid == image_uuid,
+                    ORMImage.public.is_(True),
+                ),
+            )
         return Response(status_code=200 if result.scalar_one_or_none() is not None else 404)
 
     @app.get(path="/image/needs-reprocessing")
@@ -685,7 +853,6 @@ class APIService(APIServiceProto):
                 select(ORMImage.image_uuid)
                 .where(
                     ORMImage.image_uuid == image_uuid,
-                    ORMImage.image_hash.is_(None),
                 ),
             )
         return Response(status_code=200 if result.scalar_one_or_none() is not None else 404)
@@ -728,10 +895,12 @@ class APIService(APIServiceProto):
             modified_image_uuid=modified_image_uuid,
         ))
 
-        self.background_tasks.add(task)
-        task.add_done_callback(self.background_tasks.discard)
+        self.ctx.state["queued_processing"] += 1
 
-        self.ctx.state["queued_processing"] = self.ctx.state.get("queued_processing", 0) + 1
+        self.background_tasks.add(task)
+        task.add_done_callback(self.global_task_resolver)
+        task.add_done_callback(self.decrement_queued_processing)
+
         ctx.response.status_code = 201
 
     @bentoml.api(
@@ -772,6 +941,8 @@ class APIService(APIServiceProto):
             ai_generated_status=AIGeneratedStatus(ai_generated_status),
             metadata=metadata or {},
         ))
+        self.logger.debug("Added image processing task to background tasks for {image_uuid}", image_uuid=image_uuid)
+
         self.background_tasks.add(task)
         task.add_done_callback(self.background_tasks.discard)
 

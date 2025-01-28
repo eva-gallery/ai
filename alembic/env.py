@@ -1,8 +1,3 @@
-import os
-
-if os.getenv("CI"):
-    exit(0)
-
 from logging.config import fileConfig
 from typing import Any, cast
 
@@ -14,11 +9,15 @@ from sqlalchemy.engine.url import URL
 from ai_api import settings
 from ai_api.orm import Base
 from ai_api.orm.gallery_embedding import GalleryEmbedding # type: ignore[unused-import]
-from ai_api.orm.image import ImageHash, Image # type: ignore[unused-import]
+from ai_api.orm.image import Image # type: ignore[unused-import]
+
+if settings.debug:
+    exit(0)
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 global_url = URL.create("postgresql", settings.postgres.user, settings.postgres.password, settings.postgres.host, settings.postgres.port, settings.postgres.db)
+print("Using connection string: ", global_url.render_as_string(hide_password=True))
 global_url = global_url.render_as_string(hide_password=False).replace("%", "%%")
 config = context.config
 config.set_main_option("sqlalchemy.url", global_url)

@@ -18,3 +18,4 @@ settings.local.yaml
 # Debug files
 debug.py
 test.ipynb
+db_debug.py

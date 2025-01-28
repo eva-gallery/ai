@@ -14,6 +14,7 @@ ARG EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD
 # Set environment variables from build arguments
 ENV EVA_AI_MODEL__CACHE_DIR=$EVA_AI_MODEL__CACHE_DIR
 ENV EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=$EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD
+ENV EVA_AI_DEBUG=true
 ENV CI='true'
 
 RUN apt-get update || true
@@ -25,5 +26,6 @@ RUN apt-get install -y libgl1 ffmpeg libsm6 libxext6 python3-opencv || true
 ENV EVA_AI_MODEL__CACHE_DIR=
 ENV EVA_AI_MODEL__PRE_DOWNLOAD_DURING_BUILD=
 ENV CI=
+ENV EVA_AI_DEBUG=
 
 {% endblock %}

@@ -8,7 +8,6 @@ like vectorscale and pgvector for similarity search operations.
 
 from __future__ import annotations
 
-import os
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Self
@@ -18,7 +17,7 @@ from sqlalchemy.exc import InvalidRequestError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm.session import Session, SessionTransaction, sessionmaker
 
-from ai_api.util.guard import is_sync_session, is_sync_session_transaction
+from ai_api import settings
 from ai_api.util.logger import get_logger
 from ai_api.util.singleton import Singleton
 
@@ -53,11 +52,11 @@ class DatabaseBase:
         """Initialize database extensions for vector operations.
 
         Attempts to initialize vectorscale first, falling back to pgvector.
-        This operation is skipped in CI environments.
+        This operation is skipped in debug environments.
 
         :raises: May raise SQLAlchemy errors during extension initialization.
         """
-        if os.getenv("CI"):
+        if settings.debug:
             return
 
         engine = create_engine(self.url.replace("+asyncpg", ""))
@@ -130,11 +129,12 @@ class AIOPostgresBase(DatabaseBase, metaclass=Singleton):
             super().__init__(url)
             self.engine = create_async_engine(
                 self.url,
-                pool_size=5,
-                max_overflow=10,
+                pool_size=20,
+                max_overflow=30,
                 pool_timeout=30,
-                pool_recycle=1800,
                 pool_pre_ping=True,
+                pool_recycle=3600,
+                echo=False,
             )
             self._session = async_sessionmaker(
                 bind=self.engine,
@@ -200,34 +200,34 @@ class AIOPostgresBase(DatabaseBase, metaclass=Singleton):
 
 
 class AIOPostgres(AIOPostgresBase):
-    """Async PostgreSQL client with CI environment handling.
+    """Async PostgreSQL client with debug environment handling.
 
-    This class extends AIOPostgresBase with special handling for CI environments,
+    This class extends AIOPostgresBase with special handling for debug environments,
     where database operations are mocked.
 
     :param url: Database connection URL.
     :type url: str
     """
 
-    def __init__(self, url: str = "sqlite+aiosqlite://") -> None:
+    def __init__(self, url: str = settings.postgres.url) -> None:
         """Initialize the async PostgreSQL client.
 
         :param url: Database connection URL.
         :type url: str
         """
-        if os.getenv("CI"):
+        if settings.debug:
             return
         super().__init__(url)
 
     def __getattr__(self, name: str) -> Callable[[Any], None | EllipsisType]:
-        """Get attribute with CI environment handling.
+        """Get attribute with debug environment handling.
 
         :param name: Attribute name.
         :type name: str
-        :returns: Mock function in CI, actual attribute otherwise.
+        :returns: Mock function in debug, actual attribute otherwise.
         :rtype: Callable[[Any], None | EllipsisType]
         """
-        if os.getenv("CI"):
+        if settings.debug:
             return lambda *_, **__: ...
         return getattr(super(AIOPostgresBase, self), name)
 
@@ -288,25 +288,12 @@ class PostgresBase(DatabaseBase):
         :raises ValueError: If client is not in a valid state.
         :raises: Re-raises any SQLAlchemy errors after rollback.
         """
-        if not is_sync_session_transaction(self._transaction) or not is_sync_session(self._context):
-            self.logger.exception("Postgres client is not in a valid state")
-            raise ValueError
-
-        try:
-            self._transaction.commit()
-        except SQLAlchemyError:
-            self._transaction.rollback()
-            raise
-        finally:
-            self._context.close()
-            self._context = None
-            self._transaction = None
 
 
 class Postgres(PostgresBase):
-    """Synchronous PostgreSQL client with CI environment handling.
+    """Synchronous PostgreSQL client with debug environment handling.
 
-    This class extends PostgresBase with special handling for CI environments,
+    This class extends PostgresBase with special handling for debug environments,
     where database operations are mocked.
 
     :param url: Database connection URL.
@@ -315,7 +302,7 @@ class Postgres(PostgresBase):
     :type init_diskann: bool
     """
 
-    def __init__(self, url: str = "sqlite://", init_diskann: bool = False) -> None:  # noqa: FBT001, FBT002
+    def __init__(self, url: str = settings.postgres.url.replace("+asyncpg", ""), init_diskann: bool = False) -> None:  # noqa: FBT001, FBT002
         """Initialize the synchronous PostgreSQL client.
 
         :param url: Database connection URL.
@@ -323,25 +310,25 @@ class Postgres(PostgresBase):
         :param init_diskann: Whether to initialize vector similarity indices.
         :type init_diskann: bool
         """
-        if os.getenv("CI"):
+        if settings.debug:
             return
         super().__init__(url, init_diskann)
 
     def __getattr__(self, name: str) -> Callable[[Any], None | EllipsisType]:
-        """Get attribute with CI environment handling.
+        """Get attribute with debug environment handling.
 
         :param name: Attribute name.
         :type name: str
-        :returns: Mock function in CI, actual attribute otherwise.
+        :returns: Mock function in debug, actual attribute otherwise.
         :rtype: Callable[[Any], None | EllipsisType]
         """
-        if os.getenv("CI"):
+        if settings.debug:
             return lambda *_, **__: ...
         return getattr(super(PostgresBase, self), name)
 
 
 class MockAIOPostgres:
-    """Mock AIOPostgres class for CI environment."""
+    """Mock AIOPostgres class for debug environment."""
 
     def __init__(self, *_: Any, **__: Any) -> None:
         """Initialize the mock AIOPostgres class."""
@@ -362,11 +349,11 @@ class MockAIOPostgres:
         return self
 
     def __getattribute__(self, name: str) -> Self | Any:
-        """Get attribute with CI environment handling."""
+        """Get attribute with debug environment handling."""
         if name in ("__aenter__", "__aexit__", "__await__", "session"):
             return super().__getattribute__(name)
         return self
 
 
-if os.getenv("CI"):
+if settings.debug:
     AIOPostgres = MockAIOPostgres  # type: ignore[]

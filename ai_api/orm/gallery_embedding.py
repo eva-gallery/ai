@@ -54,7 +54,10 @@ class GalleryEmbedding(Base):
     user_caption_embedding: Mapped[list[float] | None] = mapped_column(Vector(settings.model.embedding.dimension), nullable=True)
     generated_caption_embedding: Mapped[list[float] | None] = mapped_column(Vector(settings.model.embedding.dimension), nullable=True)
 
-    image: Mapped[Image] = relationship("image", back_populates=__tablename__)
+    image: Mapped[Image] = relationship(
+        "Image",
+        back_populates="gallery_embedding",
+    )
 
     @classmethod
     def image_embedding_distance_to(cls, vector: Sequence[float]) -> ColumnElement[float]:

@@ -1,10 +1,13 @@
 default:
   debug: false
+  log_level: "INFO"
   jwt_secret: "secret"
+  verify_jwt: true
   test: 0
   model:
     cache_dir: "./tmp/cache"
     pre_download_during_build: true
+    similarity_threshold: 0.95
     embedding:
       dimension: 512
       image:
@@ -30,9 +33,6 @@ default:
       num_inference_steps: 25
       gamma: 0
       resolution_longest_size: 1024
-    hash:
-      method: "phash"  # one of phash, dhash, whash
-      threshold: 0.90
   bentoml:
     hf_offline: "false"
     service:
@@ -127,8 +127,10 @@ production:
     url: "@format postgresql+asyncpg://{this.postgres.user}:{this.postgres.password}@{this.postgres.host}:{this.postgres.port}/{this.postgres.db}"
 
 testing:
+  log_level: "DEBUG"
   test: 1
-  debug: true
+  verify_jwt: false
+  debug: false
   eva_backend:
     url: "http://test-api:8000"
     patch_endpoint: "/ai/image/update"
@@ -157,6 +159,6 @@ testing:
     host: "localhost"
     port: 5432
     user: "postgres"
-    password: "password"
-    db: "eva_ai_test"
+    password: ""
+    db: "postgres"
     url: "@format postgresql+asyncpg://{this.postgres.user}:{this.postgres.password}@{this.postgres.host}:{this.postgres.port}/{this.postgres.db}"

@@ -7,12 +7,14 @@ with configurable output formatting and log levels.
 
 import os
 import sys
+from collections.abc import Callable
 from types import EllipsisType
-from typing import Any, Callable
+from typing import Any
 
 from loguru import logger as base_logger
 from loguru._logger import Logger
 
+from ai_api import settings
 from ai_api.util.singleton import Singleton
 
 
@@ -51,7 +53,7 @@ class SingletonLogger(metaclass=Singleton):
         """
         self.logger = base_logger.bind(logger="main_logger")
         self.logger.add(sys.stdout,
-                       level="INFO",
+                       level=settings.log_level,
                        enqueue=True,
                        format="{time:YYYY-MM-DD HH:mm:ss} | {file}:{line} | {level} | {message}")
 
