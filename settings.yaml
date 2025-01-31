@@ -130,7 +130,7 @@ testing:
   log_level: "DEBUG"
   test: 1
   verify_jwt: false
-  debug: true
+  debug: false
   eva_backend:
     url: "http://test-api:8000"
     patch_endpoint: "/ai/image/update"

@@ -130,11 +130,22 @@ class AIOPostgresBase(DatabaseBase, metaclass=Singleton):
             self.engine = create_async_engine(
                 self.url,
                 pool_size=20,
-                max_overflow=30,
-                pool_timeout=30,
+                max_overflow=10,
+                pool_timeout=15,
                 pool_pre_ping=True,
-                pool_recycle=3600,
+                pool_recycle=300,
                 echo=False,
+                pool_use_lifo=True,
+                connect_args={
+                    "server_settings": {
+                        "application_name": "gallery-ai",
+                        "tcp_keepalives_idle": "60",
+                        "tcp_keepalives_interval": "10",
+                        "tcp_keepalives_count": "6",
+                        "statement_timeout": "29000",
+                        "idle_in_transaction_session_timeout": "29000",
+                    },
+                },
             )
             self._session = async_sessionmaker(
                 bind=self.engine,
@@ -143,13 +154,28 @@ class AIOPostgresBase(DatabaseBase, metaclass=Singleton):
             )
             self._initialized = True
 
+    async def check_connection(self) -> None:
+        """Check if database connection is healthy.
+
+        :raises: SQLAlchemyError if connection check fails
+        """
+        try:
+            async with self.engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+        except SQLAlchemyError:
+            self.logger.exception("Database connection check failed")
+            raise
+
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSessionType]:
-        """Create an async session context.
+        """Create an async session context with connection validation.
 
         :yields: Async database session.
         :rtype: AsyncIterator[AsyncSessionType]
+        :raises: SQLAlchemyError if connection check fails
         """
+        await self.check_connection()
+
         async_session: AsyncSessionType = self._session()
         try:
             yield async_session
