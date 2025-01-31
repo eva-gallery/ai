@@ -41,6 +41,7 @@ python:
     - loguru<1.0.0
     - alembic<2.0.0
     - psycopg2-binary<3.0.0
+    - tenacity<=9.0.0
   lock_packages: false
   pip_args: "--upgrade --no-cache-dir"
 docker:
