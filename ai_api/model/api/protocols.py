@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
     from _bentoml_sdk.method import APIMethod
     from bentoml import Context
+    from fastapi import Request
     from fastapi.responses import JSONResponse
     from loguru._logger import Logger
     from PIL.Image import Image as PILImage
@@ -128,12 +129,12 @@ class APIServiceProto(Protocol):
     readyz: Callable[[Any], Coroutine[Any, Any, JSONResponse]]
 
     search_query: Callable[
-        [Any, str, int, int],
+        [Any, Request, str, int, int],
         Coroutine[Any, Any, SearchResponse],
     ]
 
     search_image: Callable[
-        [Any, str, int, int],
+        [Any, Request, str, int, int],
         Coroutine[Any, Any, ImageSearchResponse],
     ]
 

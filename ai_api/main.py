@@ -698,7 +698,7 @@ class APIService(APIServiceProto):
 
         except Exception as e:
             self.logger.exception("Failed to search for images: {e}", e=e)
-            results = []
+            raise HTTPException(status_code=503, detail="Failed to search for images due to database error") from e
 
         self.logger.info("Completed image search for UUID: {uuid}, found {count} results", uuid=image_uuid, count=len(results))
         return ImageSearchResponse(image_uuid=list(results))
@@ -751,7 +751,7 @@ class APIService(APIServiceProto):
                 results = result.scalars().all()
         except Exception as e:
             self.logger.exception("Failed to search for images: {e}", e=e)
-            results = []
+            raise HTTPException(status_code=503, detail="Failed to search for images due to database error") from e
 
         return ImageSearchResponse(image_uuid=list(results))  # type: ignore[misc]
 
@@ -810,10 +810,7 @@ class APIService(APIServiceProto):
 
         except SQLAlchemyError as e:
             self.logger.exception("Failed to publish images: {e}", e=e)
-            return JSONResponse(
-                status_code=500,
-                content={"error": "Database error occurred while publishing images"},
-            )
+            raise HTTPException(status_code=503, detail="Failed to publish images due to database error") from e
 
         return JSONResponse(status_code=200, content={})
 
@@ -828,8 +825,12 @@ class APIService(APIServiceProto):
         :raises HTTPException: If JWT token is invalid.
         """
         self._verify_jwt(request)
-        async with AIOPostgres().session() as conn:
-            result = await conn.execute(select(ORMImage.image_uuid).where(ORMImage.image_uuid == image_uuid))
+        try:
+            async with AIOPostgres().session() as conn:
+                result = await conn.execute(select(ORMImage.image_uuid).where(ORMImage.image_uuid == image_uuid))
+        except Exception as e:
+            raise HTTPException(status_code=503, detail="Failed to check if image exists due to database error") from e
+
         return Response(status_code=200 if result.scalar_one_or_none() is not None else 404)
 
     @app.get(path="/image/check-public")
@@ -843,14 +844,18 @@ class APIService(APIServiceProto):
         :raises HTTPException: If JWT token is invalid.
         """
         self._verify_jwt(request)
-        async with AIOPostgres().session() as conn:
-            result = await conn.execute(
-                select(ORMImage.image_uuid)
-                .where(
+        try:
+            async with AIOPostgres().session() as conn:
+                result = await conn.execute(
+                    select(ORMImage.image_uuid)
+                    .where(
                     ORMImage.image_uuid == image_uuid,
                     ORMImage.public.is_(True),
-                ),
-            )
+                    ),
+                )
+        except Exception as e:
+            raise HTTPException(status_code=503, detail="Failed to check if image is public due to database error") from e
+
         return Response(status_code=200 if result.scalar_one_or_none() is not None else 404)
 
     @app.get(path="/image/needs-reprocessing")
@@ -864,13 +869,17 @@ class APIService(APIServiceProto):
         :raises HTTPException: If JWT token is invalid.
         """
         self._verify_jwt(request)
-        async with AIOPostgres().session() as conn:
-            result = await conn.execute(
-                select(ORMImage.image_uuid)
-                .where(
-                    ORMImage.image_uuid == image_uuid,
-                ),
-            )
+        try:
+            async with AIOPostgres().session() as conn:
+                result = await conn.execute(
+                    select(ORMImage.image_uuid)
+                    .where(
+                        ORMImage.image_uuid == image_uuid,
+                    ),
+                )
+        except Exception as e:
+            raise HTTPException(status_code=503, detail="Failed to check if image needs reprocessing due to database error") from e
+
         return Response(status_code=200 if result.scalar_one_or_none() is not None else 404)
 
     @bentoml.api(
