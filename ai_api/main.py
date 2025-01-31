@@ -24,7 +24,7 @@ import aiohttp
 import bentoml
 import jwt
 import tenacity
-from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from jwt.exceptions import InvalidTokenError
 from PIL import Image
@@ -607,7 +607,7 @@ class APIService(APIServiceProto):
         return SearchResponse(image_uuid=list(results))
 
     @app.get(path="/image/search_query", response_model=None)
-    async def search_query(self, query: str, count: int = 50, page: int = 0) -> SearchResponse:
+    async def search_query(self, request: Request, query: str, count: int = 50, page: int = 0) -> SearchResponse:
         """Search for images using a text query.
 
         :param query: Text query to search with.
@@ -620,7 +620,7 @@ class APIService(APIServiceProto):
         :rtype: SearchResponse
         :raises HTTPException: If JWT token is invalid.
         """
-        self._verify_jwt(self.ctx.request)
+        self._verify_jwt(request)
         embedded_text: tuple[float, ...] = await _get_query_embeddings(
             query,
             self.embedding_service,
@@ -635,7 +635,7 @@ class APIService(APIServiceProto):
             return SearchResponse(image_uuid=[])
 
     @app.get(path="/image/search_image", response_model=None)
-    async def search_image(self, image_uuid: str, count: int = 50, page: int = 0) -> ImageSearchResponse:
+    async def search_image(self, request: Request, image_uuid: str, count: int = 50, page: int = 0) -> ImageSearchResponse:
         """Search for similar images using an image UUID.
 
         :param image_uuid: UUID of the reference image which must be the modified image UUID.
@@ -648,7 +648,7 @@ class APIService(APIServiceProto):
         :rtype: ImageSearchResponse
         :raises HTTPException: If JWT token is invalid.
         """
-        self._verify_jwt(self.ctx.request)
+        self._verify_jwt(request)
         self.logger.info("Starting image search for UUID: {uuid} with count={count}, page={page}", uuid=image_uuid, count=count, page=page)
 
         try:
@@ -706,6 +706,7 @@ class APIService(APIServiceProto):
     @app.get(path="/image/search_image_raw", response_model=None)
     async def search_image_raw(
         self,
+        request: Request,
         image: UploadFile,
         count: int = 50,
         page: int = 0,
@@ -722,7 +723,7 @@ class APIService(APIServiceProto):
         :rtype: ImageSearchResponse
         :raises ValueError: If JWT token is invalid.
         """
-        self._verify_jwt(self.ctx.request)
+        self._verify_jwt(request)
         if self.ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
             self.ctx.response.status_code = 503
             return ImageSearchResponse(image_uuid=[])  # type: ignore[misc]
@@ -755,7 +756,7 @@ class APIService(APIServiceProto):
         return ImageSearchResponse(image_uuid=list(results))  # type: ignore[misc]
 
     @app.patch(path="/image/set-public", response_model=None)
-    async def publish_image(self, image_uuid: str | list[str]) -> JSONResponse:
+    async def publish_image(self, request: Request, image_uuid: str | list[str]) -> JSONResponse:
         """Publish one or multiple images by setting their public flag to True.
 
         :param image_uuid: Single image UUID or list of image UUIDs to publish.
@@ -764,7 +765,7 @@ class APIService(APIServiceProto):
         :returns: JSONResponse with status code and error message if any.
         :rtype: JSONResponse
         """
-        self._verify_jwt(self.ctx.request)
+        self._verify_jwt(request)
         if isinstance(image_uuid, str):
             image_uuid = [image_uuid]
 
@@ -817,7 +818,7 @@ class APIService(APIServiceProto):
         return JSONResponse(status_code=200, content={})
 
     @app.get(path="/image/exists")
-    async def image_exists(self, image_uuid: str) -> Response:
+    async def image_exists(self, request: Request, image_uuid: str) -> Response:
         """Check if an image exists in the database.
 
         :param image_uuid: UUID of the image to check.
@@ -826,13 +827,13 @@ class APIService(APIServiceProto):
         :rtype: Response
         :raises HTTPException: If JWT token is invalid.
         """
-        self._verify_jwt(self.ctx.request)
+        self._verify_jwt(request)
         async with AIOPostgres().session() as conn:
             result = await conn.execute(select(ORMImage.image_uuid).where(ORMImage.image_uuid == image_uuid))
         return Response(status_code=200 if result.scalar_one_or_none() is not None else 404)
 
     @app.get(path="/image/check-public")
-    async def check_public(self, image_uuid: str) -> Response:
+    async def check_public(self, request: Request, image_uuid: str) -> Response:
         """Check if an image is marked as public in the database.
 
         :param image_uuid: UUID of the image to check.
@@ -841,7 +842,7 @@ class APIService(APIServiceProto):
         :rtype: Response
         :raises HTTPException: If JWT token is invalid.
         """
-        self._verify_jwt(self.ctx.request)
+        self._verify_jwt(request)
         async with AIOPostgres().session() as conn:
             result = await conn.execute(
                 select(ORMImage.image_uuid)
@@ -853,7 +854,7 @@ class APIService(APIServiceProto):
         return Response(status_code=200 if result.scalar_one_or_none() is not None else 404)
 
     @app.get(path="/image/needs-reprocessing")
-    async def image_needs_reprocessing(self, image_uuid: str) -> Response:
+    async def image_needs_reprocessing(self, request: Request, image_uuid: str) -> Response:
         """Check if an image needs reprocessing.
 
         :param image_uuid: UUID of the image to check.
@@ -862,7 +863,7 @@ class APIService(APIServiceProto):
         :rtype: Response
         :raises HTTPException: If JWT token is invalid.
         """
-        self._verify_jwt(self.ctx.request)
+        self._verify_jwt(request)
         async with AIOPostgres().session() as conn:
             result = await conn.execute(
                 select(ORMImage.image_uuid)
