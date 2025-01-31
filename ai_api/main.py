@@ -259,21 +259,23 @@ class APIService(APIServiceProto):
         )
 
     @staticmethod
-    def _verify_jwt(request: Request | None = None, ctx: bentoml.Context | None = None) -> None:
+    def _verify_jwt(request: Request) -> None:
         """Verify JWT token from request Authorization header.
 
-        :param request: HTTP request.
+        :param request: HTTP request object or BentoML context.
         :type request: Request
-        :raises ValueError: If token is missing or invalid.
+        :raises HTTPException: If token is missing or invalid.
         """
         if not settings.verify_jwt:
             return
 
-        auth_header = (ctx.request.headers.get("Authorization") if ctx else "") or (request.headers.get("Authorization") if request else "")
+        # Handle both BentoML context and FastAPI request
+        auth_header = ""
+
+        auth_header = request.headers.get("Authorization", "")
+
         if not auth_header or not auth_header.startswith("Bearer "):
             logger.exception("Missing auth header in jwt verification.")
-            if ctx:
-                ctx.response.status_code = 401
             raise HTTPException(status_code=401, detail="Unauthorized")
 
         token = auth_header.split(" ")[1]
@@ -281,8 +283,6 @@ class APIService(APIServiceProto):
             jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
         except InvalidTokenError as e:
             logger.exception("Invalid JWT token.")
-            if ctx:
-                ctx.response.status_code = 401
             raise HTTPException(status_code=401, detail="Unauthorized") from e
 
     def _migrate_database(self) -> None:
@@ -606,7 +606,7 @@ class APIService(APIServiceProto):
 
         return SearchResponse(image_uuid=list(results))
 
-    @app.get(path="/image/search_query", response_model=None, dependencies=[Depends(_verify_jwt)])
+    @app.get(path="/image/search_query", response_model=None)
     async def search_query(self, query: str, count: int = 50, page: int = 0) -> SearchResponse:
         """Search for images using a text query.
 
@@ -618,8 +618,9 @@ class APIService(APIServiceProto):
         :type page: int
         :returns: Search response containing matching image UUIDs.
         :rtype: SearchResponse
-        :raises ValueError: If JWT token is invalid.
+        :raises HTTPException: If JWT token is invalid.
         """
+        self._verify_jwt(self.ctx.request)
         embedded_text: tuple[float, ...] = await _get_query_embeddings(
             query,
             self.embedding_service,
@@ -633,7 +634,7 @@ class APIService(APIServiceProto):
             self.logger.exception("Failed to search for images: {e}", e=e)
             return SearchResponse(image_uuid=[])
 
-    @app.get(path="/image/search_image", response_model=None, dependencies=[Depends(_verify_jwt)])
+    @app.get(path="/image/search_image", response_model=None)
     async def search_image(self, image_uuid: str, count: int = 50, page: int = 0) -> ImageSearchResponse:
         """Search for similar images using an image UUID.
 
@@ -645,8 +646,9 @@ class APIService(APIServiceProto):
         :type page: int
         :returns: Search response containing similar image UUIDs.
         :rtype: ImageSearchResponse
-        :raises ValueError: If JWT token is invalid.
+        :raises HTTPException: If JWT token is invalid.
         """
+        self._verify_jwt(self.ctx.request)
         self.logger.info("Starting image search for UUID: {uuid} with count={count}, page={page}", uuid=image_uuid, count=count, page=page)
 
         try:
@@ -701,7 +703,7 @@ class APIService(APIServiceProto):
         self.logger.info("Completed image search for UUID: {uuid}, found {count} results", uuid=image_uuid, count=len(results))
         return ImageSearchResponse(image_uuid=list(results))
 
-    @app.get(path="/image/search_image_raw", response_model=None, dependencies=[Depends(_verify_jwt)])
+    @app.get(path="/image/search_image_raw", response_model=None)
     async def search_image_raw(
         self,
         image: UploadFile,
@@ -720,6 +722,7 @@ class APIService(APIServiceProto):
         :rtype: ImageSearchResponse
         :raises ValueError: If JWT token is invalid.
         """
+        self._verify_jwt(self.ctx.request)
         if self.ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
             self.ctx.response.status_code = 503
             return ImageSearchResponse(image_uuid=[])  # type: ignore[misc]
@@ -751,17 +754,17 @@ class APIService(APIServiceProto):
 
         return ImageSearchResponse(image_uuid=list(results))  # type: ignore[misc]
 
-    @app.patch(path="/image/set-public", response_model=None, dependencies=[Depends(_verify_jwt)])  # type: ignore[misc]
+    @app.patch(path="/image/set-public", response_model=None)
     async def publish_image(self, image_uuid: str | list[str]) -> JSONResponse:
         """Publish one or multiple images by setting their public flag to True.
 
         :param image_uuid: Single image UUID or list of image UUIDs to publish.
         :type image_uuid: str | list[str]
-        :raises ValueError: If JWT token is invalid.
-        :raises SQLAlchemyError: If the database update fails.
+        :raises HTTPException: If JWT token is invalid or database update fails.
         :returns: JSONResponse with status code and error message if any.
         :rtype: JSONResponse
         """
+        self._verify_jwt(self.ctx.request)
         if isinstance(image_uuid, str):
             image_uuid = [image_uuid]
 
@@ -813,22 +816,32 @@ class APIService(APIServiceProto):
 
         return JSONResponse(status_code=200, content={})
 
-    @app.get(path="/image/exists", dependencies=[Depends(_verify_jwt)])
+    @app.get(path="/image/exists")
     async def image_exists(self, image_uuid: str) -> Response:
-        """Check if an image exists in the database."""
+        """Check if an image exists in the database.
+
+        :param image_uuid: UUID of the image to check.
+        :type image_uuid: str
+        :returns: Response with appropriate status code.
+        :rtype: Response
+        :raises HTTPException: If JWT token is invalid.
+        """
+        self._verify_jwt(self.ctx.request)
         async with AIOPostgres().session() as conn:
             result = await conn.execute(select(ORMImage.image_uuid).where(ORMImage.image_uuid == image_uuid))
         return Response(status_code=200 if result.scalar_one_or_none() is not None else 404)
 
-    @app.get(path="/image/check-public", dependencies=[Depends(_verify_jwt)])
+    @app.get(path="/image/check-public")
     async def check_public(self, image_uuid: str) -> Response:
         """Check if an image is marked as public in the database.
 
         :param image_uuid: UUID of the image to check.
         :type image_uuid: str
-        :returns: Response with 200 if image is public, 404 if not found or not public.
+        :returns: Response with appropriate status code.
         :rtype: Response
+        :raises HTTPException: If JWT token is invalid.
         """
+        self._verify_jwt(self.ctx.request)
         async with AIOPostgres().session() as conn:
             result = await conn.execute(
                 select(ORMImage.image_uuid)
@@ -839,15 +852,17 @@ class APIService(APIServiceProto):
             )
         return Response(status_code=200 if result.scalar_one_or_none() is not None else 404)
 
-    @app.get(path="/image/needs-reprocessing", dependencies=[Depends(_verify_jwt)])
+    @app.get(path="/image/needs-reprocessing")
     async def image_needs_reprocessing(self, image_uuid: str) -> Response:
         """Check if an image needs reprocessing.
 
         :param image_uuid: UUID of the image to check.
         :type image_uuid: str
-        :returns: Response with 200 if image needs reprocessing (hash is null), 404 if not found.
+        :returns: Response with appropriate status code.
         :rtype: Response
+        :raises HTTPException: If JWT token is invalid.
         """
+        self._verify_jwt(self.ctx.request)
         async with AIOPostgres().session() as conn:
             result = await conn.execute(
                 select(ORMImage.image_uuid)
@@ -880,7 +895,7 @@ class APIService(APIServiceProto):
         :type ctx: bentoml.Context
         :raises ValueError: If JWT token is invalid.
         """
-        self._verify_jwt(request=None, ctx=ctx)
+        self._verify_jwt(request=ctx.request)
 
         image_pil = image.convert("RGB")
         if ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
@@ -928,7 +943,7 @@ class APIService(APIServiceProto):
         :type ctx: bentoml.Context
         :raises ValueError: If JWT token is invalid.
         """
-        self._verify_jwt(request=None, ctx=ctx)
+        self._verify_jwt(request=ctx.request)
         if ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
             ctx.response.status_code = 503
             return
