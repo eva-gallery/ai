@@ -67,7 +67,7 @@ def get_logger() -> Logger:
     :returns: Logger instance appropriate for the current environment.
     :rtype: Logger
     """
-    if "PYTEST_CURRENT_TEST" in os.environ or "PYTEST" in os.environ:  # pragma: no cover
+    if "PYTEST_CURRENT_TEST" in os.environ or "PYTEST" in os.environ or os.environ.get("CI"):  # pragma: no cover
         return MockLogger()
 
     return SingletonLogger().logger
