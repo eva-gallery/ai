@@ -665,7 +665,6 @@ class APIService(APIServiceProto):
 
                 if image_id is None:
                     self.logger.info("Image not found or not public: {uuid}", uuid=image_uuid)
-                    self.ctx.response.status_code = 404
                     return ImageSearchResponse(image_uuid=[])
 
                 # Get the embedding for this image ID
@@ -674,7 +673,6 @@ class APIService(APIServiceProto):
 
                 if embedding is None:
                     self.logger.info("No embedding found for image ID: {id}", id=image_id)
-                    self.ctx.response.status_code = 404
                     return ImageSearchResponse(image_uuid=[])
 
                 self.logger.debug("Got embedding, length: {len}", len=len(embedding))
@@ -725,8 +723,7 @@ class APIService(APIServiceProto):
         """
         self._verify_jwt(request)
         if self.ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
-            self.ctx.response.status_code = 503
-            return ImageSearchResponse(image_uuid=[])  # type: ignore[misc]
+            raise HTTPException(status_code=503, detail="Queue full")
 
         self.ctx.state["queued_processing"] = self.ctx.state.get("queued_processing", 0) + 1
 

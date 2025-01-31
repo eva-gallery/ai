@@ -67,12 +67,23 @@ def mock_db_session() -> AsyncMock:
     # Create test UUIDs
     test_uuids = [str(uuid.uuid4()) for _ in range(3)]
     
-    # Mock the execute result for search queries
-    mock_result = AsyncMock()
-    mock_result.scalars.return_value.all.return_value = test_uuids
+    # Mock for image_id query
+    image_id_result = AsyncMock()
+    image_id_result.scalar_one_or_none.return_value = 123  # Mock image ID
     
-    # Set up the session's execute to return our mock result
-    session.execute.return_value = mock_result
+    # Mock for similarity search query
+    similarity_result = AsyncMock()
+    similarity_result.scalars.return_value.all.return_value = test_uuids
+    
+    # Set up the session's execute to return different results based on the query
+    async def mock_execute(query, *args, **kwargs):
+        # For image ID query
+        if "image_uuid" in str(query):
+            return image_id_result
+        # For similarity search query
+        return similarity_result
+    
+    session.execute = mock_execute
     
     return session
 
