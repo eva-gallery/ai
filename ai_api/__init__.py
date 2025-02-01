@@ -11,11 +11,12 @@ configuration files and environment-based settings.
 """
 
 import os
+import platform
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
 
-import torch.serialization
+import torch
 from dynaconf import Dynaconf
 from sentence_transformers.models import Dense
 from torch import Tensor, nn
@@ -24,6 +25,15 @@ from transformers import modeling_utils
 
 def filter_none_from_dict_recursive(d: dict[str, Any]) -> dict[str, Any]:
     return {k: filter_none_from_dict_recursive(v) if isinstance(v, dict) else v for k, v in d.items() if v is not None}
+
+
+def has_avx2() -> bool:
+    flags = platform.processor()
+    return 'avx2' in flags.lower()
+
+
+if not has_avx2():
+    torch.backends.nnpack.enabled = False  # type: ignore[attr-defined]
 
 
 # Add safe globals for sentence transformers
