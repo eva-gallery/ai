@@ -29,7 +29,7 @@ from fastapi.responses import JSONResponse, Response
 from jwt.exceptions import InvalidTokenError
 from PIL import Image
 from PIL.Image import Image as PILImage  # noqa: TC002
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 from sqlalchemy.exc import SQLAlchemyError
 
 from ai_api import API_SERVICE_KWARGS, settings
@@ -1015,6 +1015,67 @@ class APIService(APIServiceProto):
             return JSONResponse(status_code=503, content={"status": "not ready", "reason": "embedding service not ready"})
 
         return JSONResponse(status_code=200, content={"status": "ready"})
+
+    @app.get(path="/image/count", response_model=None)
+    async def count_records(self, request: Request) -> JSONResponse:
+        """List the number of public and non public image records in the database.
+
+        :param request: HTTP request object.
+        :type request: Request
+        :returns: JSON response with public and non public counts.
+        :rtype: JSONResponse
+        :raises HTTPException: If JWT token is invalid.
+        """
+        self._verify_jwt(request)
+        public_count: int = 0
+        non_public_count: int = 0
+        try:
+            async with AIOPostgres().session() as conn:
+                stmt = select(ORMImage.public, func.count(ORMImage.id)).group_by(ORMImage.public)
+                result = await conn.execute(stmt)
+            rows = result.all()
+            for row in rows:
+                if row[0]:
+                    public_count = row[1]
+                else:
+                    non_public_count = row[1]
+        except Exception as e:
+            self.logger.exception("Failed to count records: {e}", e=e)
+            raise HTTPException(status_code=503, detail="Failed to count records due to database error") from e
+
+        return JSONResponse(status_code=200, content={"public_count": public_count, "non_public_count": non_public_count})
+
+    @app.get(path="/image/random", response_model=None)
+    async def random_image(self, request: Request) -> JSONResponse:
+        """Retrieve a random embedded image uuid along with its annotations.
+
+        :param request: HTTP request object.
+        :type request: Request
+        :returns: JSON response with image uuid and annotations.
+        :rtype: JSONResponse    
+        :raises HTTPException: If JWT token is invalid.
+        """
+        self._verify_jwt(request)
+        try:
+            async with AIOPostgres().session() as conn:
+                stmt = select(ORMImage.image_uuid, ORMImage.generated_annotation, ORMImage.user_annotation).\
+                join(ORMGalleryEmbedding, ORMGalleryEmbedding.image_id == ORMImage.id).\
+                order_by(func.random()).\
+                limit(1)
+                result = await conn.execute(stmt)
+                row = result.first()
+
+            if not row:
+                return JSONResponse(status_code=404, content={"error": "No record found"})
+
+            return JSONResponse(status_code=200, content={
+                "image_uuid": row[0],
+                "generated_annotation": row[1],
+                "user_annotation": row[2],
+            })
+        except Exception as e:
+            self.logger.exception("Failed to retrieve random image: {e}", e=e)
+            raise HTTPException(status_code=503, detail="Failed to retrieve random image due to database error") from e
 
     @bentoml.api(
         batchable=True,

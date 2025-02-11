@@ -358,6 +358,7 @@ class MockAIOPostgres:
 
     def __init__(self, *_: Any, **__: Any) -> None:
         """Initialize the mock AIOPostgres class."""
+        get_logger().warning("Mock AIOPostgres class is being used.")
 
     async def __aenter__(self) -> Self:
         """Enter the mock AIOPostgres context."""
