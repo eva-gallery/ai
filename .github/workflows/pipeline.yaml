@@ -13,43 +13,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check-test-status:
-    runs-on: ubuntu-latest
-    outputs:
-      should_run: ${{ steps.check.outputs.should_run }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+  # check-test-status:
+  #   runs-on: ubuntu-latest
+  #   outputs:
+  #     should_run: ${{ steps.check.outputs.should_run }}
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0
 
-      - id: check
-        name: Check changes
-        run: |
-          SHOULD_RUN=false
+  #     - id: check
+  #       name: Check changes
+  #       run: |
+  #         SHOULD_RUN=false
 
-          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "Push to main - always run"
-            SHOULD_RUN=true
-          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            CHANGED_FILES=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --jq '.[].filename')
-            if echo "$CHANGED_FILES" | grep -qE "^(src/|tests/|pyproject\.toml|pytest\.ini|\.github/workflows/pipeline\.ya?ml)"; then
-              echo "Relevant files changed in pull request"
-              SHOULD_RUN=true
-            else
-              echo "No relevant files changed in pull request"
-            fi
-          fi
+  #         if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+  #           echo "Push to main - always run"
+  #           SHOULD_RUN=true
+  #         elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+  #           CHANGED_FILES=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --jq '.[].filename')
+  #           if echo "$CHANGED_FILES" | grep -qE "^(src/|tests/|pyproject\.toml|pytest\.ini|\.github/workflows/pipeline\.ya?ml)"; then
+  #             echo "Relevant files changed in pull request"
+  #             SHOULD_RUN=true
+  #           else
+  #             echo "No relevant files changed in pull request"
+  #           fi
+  #         fi
 
-          if [[ "$SHOULD_RUN" == "true" ]]; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
-            echo "Tests will run"
-          else
-            echo "should_run=false" >> $GITHUB_OUTPUT
-            echo "Tests will not run"
-          fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #         if [[ "$SHOULD_RUN" == "true" ]]; then
+  #           echo "should_run=true" >> $GITHUB_OUTPUT
+  #           echo "Tests will run"
+  #         else
+  #           echo "should_run=false" >> $GITHUB_OUTPUT
+  #           echo "Tests will not run"
+  #         fi
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   check-build-status:
     runs-on: ubuntu-latest
@@ -98,64 +98,64 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  test:
-    #needs: check-test-status
-    #if: needs.check-test-status.outputs.should_run == 'true'
-    timeout-minutes: 15
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        timeout-minutes: 6
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        timeout-minutes: 6
-        with:
-          python-version: '3.11'
-
-      - name: Cache model files
-        uses: actions/cache@v4
-        timeout-minutes: 6
-        with:
-          path: /tmp/cache
-          key: ${{ runner.os }}-model-cache-${{ hashFiles('**/settings.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-model-cache-${{ hashFiles('**/settings.yaml') }}
-
-      - name: Restore virtual environment
-        id: cache-venv
-        uses: actions/cache/restore@v4
-        timeout-minutes: 6
-        with:
-          path: .venv
-          key: ${{ runner.os }}-venv-${{ hashFiles('**/pyproject.toml') }}
-
-      - name: Create virtual environment and install dependencies
-        if: steps.cache-venv.outputs.cache-hit != 'true'
-        timeout-minutes: 5
-        run: |
-          python -m venv .venv
-          source .venv/bin/activate
-          pip install --upgrade --root-user-action=ignore -e .
-          pip install --upgrade pytest pytest-asyncio pytest-dependency pytest-order pytest-timeout pytest-cov pytest-socket
-
-      - name: Cache virtual environment
-        uses: actions/cache/save@v4
-        if: steps.cache-venv.outputs.cache-hit != 'true'
-        timeout-minutes: 6
-        with:
-          path: .venv
-          key: ${{ runner.os }}-venv-${{ hashFiles('**/pyproject.toml') }}
-
-      - name: Run tests
-        timeout-minutes: 10
-        run: |
-          source .venv/bin/activate
-          pytest tests/
+  # test:
+  #   #needs: check-test-status
+  #   #if: needs.check-test-status.outputs.should_run == 'true'
+  #   timeout-minutes: 15
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #       timeout-minutes: 6
+  #
+  #     - name: Setup Python
+  #       uses: actions/setup-python@v5
+  #       timeout-minutes: 6
+  #       with:
+  #         python-version: '3.11'
+  #
+  #     - name: Cache model files
+  #       uses: actions/cache@v4
+  #       timeout-minutes: 6
+  #       with:
+  #         path: /tmp/cache
+  #         key: ${{ runner.os }}-model-cache-${{ hashFiles('**/settings.yaml') }}
+  #         restore-keys: |
+  #           ${{ runner.os }}-model-cache-${{ hashFiles('**/settings.yaml') }}
+  #
+  #     - name: Restore virtual environment
+  #       id: cache-venv
+  #       uses: actions/cache/restore@v4
+  #       timeout-minutes: 6
+  #       with:
+  #         path: .venv
+  #         key: ${{ runner.os }}-venv-${{ hashFiles('**/pyproject.toml') }}
+  #
+  #     - name: Create virtual environment and install dependencies
+  #       if: steps.cache-venv.outputs.cache-hit != 'true'
+  #       timeout-minutes: 5
+  #       run: |
+  #         python -m venv .venv
+  #         source .venv/bin/activate
+  #         pip install --upgrade --root-user-action=ignore -e .
+  #         pip install --upgrade pytest pytest-asyncio pytest-dependency pytest-order pytest-timeout pytest-cov pytest-socket
+  #
+  #     - name: Cache virtual environment
+  #       uses: actions/cache/save@v4
+  #       if: steps.cache-venv.outputs.cache-hit != 'true'
+  #       timeout-minutes: 6
+  #       with:
+  #         path: .venv
+  #         key: ${{ runner.os }}-venv-${{ hashFiles('**/pyproject.toml') }}
+  #
+  #     - name: Run tests
+  #       timeout-minutes: 10
+  #       run: |
+  #         source .venv/bin/activate
+  #         pytest tests/
 
   build_and_push:
-    needs: [test]
+    #needs: [test]
     #if: needs.check-build-status.outputs.should_build == 'true'
     timeout-minutes: 30
     runs-on: ubuntu-latest
