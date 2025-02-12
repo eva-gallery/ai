@@ -29,8 +29,9 @@ from fastapi.responses import JSONResponse, Response
 from jwt.exceptions import InvalidTokenError
 from PIL import Image
 from PIL.Image import Image as PILImage  # noqa: TC002
-from sqlalchemy import select, update, func
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ai_api import API_SERVICE_KWARGS, settings
 from ai_api.database import AIOPostgres
@@ -215,11 +216,13 @@ class APIService(APIServiceProto):
         try:
             if task.done():
                 if task.exception() is not None:
-                    self.logger.exception("Task failed: {task}", task=task)
+                    raise task.exception()  # type: ignore[BaseException]
                 return
             task.cancel()
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            exc_str = traceback.format_exc(limit=3)
+            self.logger.exception("Task {task_name} failed: {e}", task_name=task.get_name(), e=exc_str)
+            raise HTTPException(status_code=500, detail=exc_str) from e
         finally:
             self.background_tasks.discard(task)
 
@@ -253,8 +256,7 @@ class APIService(APIServiceProto):
                 "error_code": "500",
                 "request_info": request,
                 "error_message": "Internal Server Error",
-                "error_traceback": traceback.format_exc(limit=5),
-                "exception": exc,
+                "error_traceback": traceback.format_exc(limit=3),
             },
         )
 
@@ -326,8 +328,6 @@ class APIService(APIServiceProto):
             "Authorization": f"Bearer {jwt.encode({'sub': 'ai-service'}, settings.jwt_secret, algorithm='HS256')}",
         }
 
-        self.logger.debug("Sending PATCH request to backend for {image_uuid}", image_uuid=image_model.image_uuid)
-
         if duplicate_status is not ImageDuplicateStatus.OK:
             self.logger.debug("Duplicate status for {image_uuid}: {duplicate_status}", image_uuid=image_model.image_uuid, duplicate_status=duplicate_status)
             patch_request = BackendPatchRequest(
@@ -341,8 +341,11 @@ class APIService(APIServiceProto):
 
             data = aiohttp.FormData()
             data.add_field("json", patch_request.model_dump_json(), content_type="application/json")
-
+            if settings.test:
+                self.logger.debug("Skipping patch request for {image_uuid} in test mode", image_uuid=image_model.image_uuid)
+                return
             try:
+                self.logger.debug("Sending PATCH request to backend for {image_uuid}", image_uuid=image_model.image_uuid)
                 async with aiohttp.ClientSession() as session, session.patch(
                     settings.eva_backend.backend_image_patch_route,
                     data=data,
@@ -363,18 +366,64 @@ class APIService(APIServiceProto):
 
         try:
             async with AIOPostgres().session() as conn:
-                # Add and flush image data model
-                conn.add(image_model)
-                await conn.flush()
+                # Upsert image data model
+                image_stmt = pg_insert(ORMImage).values(
+                    image_uuid=image_model.image_uuid,
+                    original_image_uuid=image_model.original_image_uuid,
+                    generated_status=image_model.generated_status,
+                    image_metadata=image_model.image_metadata,
+                    public=image_model.public,
+                    user_annotation=image_model.user_annotation,
+                    generated_annotation=image_model.generated_annotation,
+                ).on_conflict_do_update(
+                    constraint='image_image_uuid_key',
+                    set_=dict(
+                        original_image_uuid=image_model.original_image_uuid,
+                        generated_status=image_model.generated_status,
+                        image_metadata=image_model.image_metadata,
+                        public=image_model.public,
+                        user_annotation=image_model.user_annotation,
+                        generated_annotation=image_model.generated_annotation,
+                    ),
+                ).returning(ORMImage.id)
+                
+                image_id = (await conn.execute(image_stmt)).scalar_one()
 
-                # Set image_id on gallery embedding and add
-                gallery_embedding_model.image_id = image_model.id
-                conn.add(gallery_embedding_model)
+                # Check if gallery embedding exists
+                existing_stmt = select(ORMGalleryEmbedding).where(ORMGalleryEmbedding.image_id == image_id)
+                existing_embedding = (await conn.execute(existing_stmt)).scalar_one_or_none()
+
+                if existing_embedding:
+                    # Update existing embedding
+                    update_stmt = (
+                        update(ORMGalleryEmbedding)
+                        .where(ORMGalleryEmbedding.image_id == image_id)
+                        .values(
+                            image_embedding=gallery_embedding_model.image_embedding,
+                            watermarked_image_embedding=gallery_embedding_model.watermarked_image_embedding,
+                            metadata_embedding=gallery_embedding_model.metadata_embedding,
+                            user_caption_embedding=gallery_embedding_model.user_caption_embedding,
+                            generated_caption_embedding=gallery_embedding_model.generated_caption_embedding,
+                        )
+                    )
+                    await conn.execute(update_stmt)
+                else:
+                    # Insert new embedding
+                    insert_stmt = pg_insert(ORMGalleryEmbedding).values(
+                        image_id=image_id,
+                        image_embedding=gallery_embedding_model.image_embedding,
+                        watermarked_image_embedding=gallery_embedding_model.watermarked_image_embedding,
+                        metadata_embedding=gallery_embedding_model.metadata_embedding,
+                        user_caption_embedding=gallery_embedding_model.user_caption_embedding,
+                        generated_caption_embedding=gallery_embedding_model.generated_caption_embedding,
+                    )
+                    await conn.execute(insert_stmt)
+
                 await conn.commit()
 
-                self.logger.debug("Saved image data for {image_uuid}", image_uuid=image_model.image_uuid)
+                self.logger.debug("Saved/updated image data for {image_uuid}", image_uuid=image_model.image_uuid)
         except Exception as e:
-            self.logger.exception("Failed to save image data for {image_uuid}: {e}", image_uuid=image_model.image_uuid, e=e)
+            self.logger.exception("Failed to save/update image data for {image_uuid}: {e}", image_uuid=image_model.image_uuid, e=e)
             raise
 
         # Convert PIL image to bytes for storage
@@ -400,25 +449,28 @@ class APIService(APIServiceProto):
         data.add_field("json", patch_request.model_dump_json(), content_type="application/json")
         data.add_field("image", image_bytes, filename="image.png", content_type="image/png")
 
-        self.logger.debug("Sending PATCH request to backend for {image_uuid}", image_uuid=image_model.image_uuid)
 
-        try:
-            async with aiohttp.ClientSession() as session, session.patch(
-                settings.eva_backend.backend_image_patch_route,
-                data=data,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as response:
-                if response.status not in (200, 201):
-                    self.logger.error("Failed to patch backend: {response}", response=await response.text())
-        except asyncio.TimeoutError:
-            self.logger.exception("Request to backend timed out for {image_uuid}", image_uuid=image_model.image_uuid)
-        except aiohttp.ClientError as e:
-            self.logger.exception("Failed to connect to backend for {image_uuid}: {e}", image_uuid=image_model.image_uuid, e=e)
-        except Exception as e:
-            self.logger.exception("Unexpected error while patching backend for {image_uuid}: {e}", image_uuid=image_model.image_uuid, e=e)
+        if not settings.test:
+            self.logger.debug("Sending PATCH request to backend for {image_uuid}", image_uuid=image_model.image_uuid)
+            try:
+                async with aiohttp.ClientSession() as session, session.patch(
+                    settings.eva_backend.backend_image_patch_route,
+                    data=data,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as response:
+                    if response.status not in (200, 201):
+                        self.logger.error("Failed to patch backend: {response}", response=await response.text())
+            except asyncio.TimeoutError:
+                self.logger.exception("Request to backend timed out for {image_uuid}", image_uuid=image_model.image_uuid)
+            except aiohttp.ClientError as e:
+                self.logger.exception("Failed to connect to backend for {image_uuid}: {e}", image_uuid=image_model.image_uuid, e=e)
+            except Exception as e:
+                self.logger.exception("Unexpected error while patching backend for {image_uuid}: {e}", image_uuid=image_model.image_uuid, e=e)
 
-        self.logger.debug("All done")
+            self.logger.debug("All done")
+        else:
+            self.logger.debug("Skipping patch request for {image_uuid} in test mode", image_uuid=image_model.image_uuid)
 
     async def _process_image_data(  # noqa: PLR0915
         self,
@@ -548,8 +600,6 @@ class APIService(APIServiceProto):
 
         metadata["ai_generated"] = ai_generated_status.value
         metadata["duplicate_status"] = duplicate_status.value
-
-        self.logger.debug("Metadata for {image_uuid}: {metadata}", image_uuid=artwork_uuid, metadata=metadata)
 
         self.logger.debug("Removed from queued_processing")
 
@@ -905,7 +955,7 @@ class APIService(APIServiceProto):
         self._verify_jwt(request=ctx.request)
 
         image_pil = image.convert("RGB")
-        if ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
+        if self.ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
             ctx.response.status_code = 503
             return
 
@@ -951,9 +1001,23 @@ class APIService(APIServiceProto):
         :raises ValueError: If JWT token is invalid.
         """
         self._verify_jwt(request=ctx.request)
-        if ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
+        if self.ctx.state.get("queued_processing", 0) >= settings.bentoml.inference.slow_batched_op_max_batch_size:
             ctx.response.status_code = 503
             return
+
+        # Check if image UUID already exists in database
+        self.logger.debug("Checking if image UUID {image_uuid} already exists in database", image_uuid=image_uuid)
+        async with AIOPostgres().session() as conn:
+            existing_image = await conn.scalar(
+                select(ORMImage.id).where(
+                    ORMImage.original_image_uuid == image_uuid,
+                ),
+            )
+
+            if existing_image is not None:
+                self.logger.error("Image UUID {image_uuid} already exists in database", image_uuid=image_uuid)
+                ctx.response.status_code = 409
+                return
 
         image_pil = image.convert("RGB")
 
@@ -962,13 +1026,15 @@ class APIService(APIServiceProto):
             artwork_uuid=image_uuid,
             ai_generated_status=AIGeneratedStatus(ai_generated_status),
             metadata=metadata or {},
-        ))
-        self.logger.debug("Added image processing task to background tasks for {image_uuid}", image_uuid=image_uuid)
+        ), name=f"process_image_{image_uuid}")
+        self.ctx.state["queued_processing"] = self.ctx.state.get("queued_processing", 0) + 1
+        self.logger.debug("Added image processing task to background tasks for {image_uuid} and incremented queued_processing to {queued_processing}",
+                          image_uuid=image_uuid, queued_processing=self.ctx.state["queued_processing"])
 
         self.background_tasks.add(task)
-        task.add_done_callback(self.background_tasks.discard)
+        task.add_done_callback(self.global_task_resolver)
+        task.add_done_callback(self.decrement_queued_processing)
 
-        ctx.state["queued_processing"] = ctx.state.get("queued_processing", 0) + 1
         ctx.response.status_code = 201
 
     @app.get(path="/healthz")
@@ -1052,7 +1118,7 @@ class APIService(APIServiceProto):
         :param request: HTTP request object.
         :type request: Request
         :returns: JSON response with image uuid and annotations.
-        :rtype: JSONResponse    
+        :rtype: JSONResponse
         :raises HTTPException: If JWT token is invalid.
         """
         self._verify_jwt(request)

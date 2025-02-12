@@ -371,7 +371,7 @@ class MockAIOPostgres:
         """Return the mock AIOPostgres context."""
         return self
 
-    async def session(self) -> Self:
+    def session(self) -> Self:
         """Return the mock AIOPostgres context."""
         return self
 

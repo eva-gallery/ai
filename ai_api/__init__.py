@@ -11,6 +11,10 @@ configuration files and environment-based settings.
 """
 
 import os
+
+os.environ["TQDM_DISABLE"] = "1"
+
+
 import platform
 from pathlib import Path
 from typing import Any
@@ -29,7 +33,7 @@ def filter_none_from_dict_recursive(d: dict[str, Any]) -> dict[str, Any]:
 
 def has_avx2() -> bool:
     flags = platform.processor()
-    return 'avx2' in flags.lower()
+    return "avx2" in flags.lower()
 
 
 if not has_avx2():
