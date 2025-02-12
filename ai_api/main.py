@@ -247,14 +247,12 @@ class APIService(APIServiceProto):
         :param exc: The exception raised.
         :return: A JSONResponse object with the error code and message.
         """
+        self.logger.exception("Unhandled exception: %s", exc)
         return JSONResponse(
             status_code=500,
             content={
                 "error_code": "500",
-                "request_info": request,
                 "error_message": "Internal Server Error",
-                "error_traceback": traceback.format_exc(limit=5),
-                "exception": exc,
             },
         )
 
